@@ -2,8 +2,6 @@
 
 import os
 import time
-import base64
-import pandas as pd
 import networkx as nx
 
 import graphlab as gl
@@ -25,8 +23,8 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
     layer_set = bitset('Layers', tuple(range(nb_layers)))
     # Aggregate layers per node
     node_signal = signal.groupby(baseid_name, {'layers': gl.aggregate.CONCAT(layer_name)}).sort(baseid_name)
-    # Convert layer number into bitstring then to base64 and add them as attributes on the nodes
-    layer_bitstring = node_signal.apply(lambda x: base64.b64encode(layer_set(tuple(x['layers'].tolist())).bits()))
+    # Convert layer number into bitstring and add them as attributes on the nodes
+    layer_bitstring = node_signal.apply(lambda x: layer_set(tuple(x['layers'].tolist())).bits())
     # Remove old layers column and replace it with the bitstring one
     node_signal = node_signal.remove_column('layers').add_column(layer_bitstring, 'layers')
 
