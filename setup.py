@@ -12,7 +12,12 @@ readme = open('README.rst').read()
 history = open('HISTORY.rst').read().replace('.. :changelog:', '')
 
 requirements = [
-    # TODO: put package requirements here
+    "GraphLab-Create",
+    "bitsets",
+    "networkx",
+    "numpy",
+    "pandas",
+    "wheel"
 ]
 
 test_requirements = [

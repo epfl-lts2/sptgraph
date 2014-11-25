@@ -14,7 +14,7 @@ spatiotemporalgraph
 
 Spatio-Temporal Graph repo
 
-* Free software: BSD license
+* Free software: GPLv2 license
 * Documentation: https://sptgraph.readthedocs.org.
 
 Features

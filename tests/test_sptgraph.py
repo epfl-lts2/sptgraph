@@ -19,10 +19,11 @@ class TestSptgraph(unittest.TestCase):
         pass
 
     def test_something(self):
-        pass
+        self.assertTrue(True, 'is works')
 
     def tearDown(self):
         pass
 
 if __name__ == '__main__':
     unittest.main()
+
