@@ -23,10 +23,10 @@ def generate_sp_edge_sframe(x):
 
 
 def build_edge_bitstring(src_bitstring, tgt_bitstring, layer_set):
-    src_layers = long(src_bitstring)
-    dst_layers = long(tgt_bitstring)
-    # Left shift
-    dst_layers <<= 1
+    src_layers = int(src_bitstring)
+    dst_layers = int(tgt_bitstring)
+    # Right shift
+    dst_layers >>= 1
     res = layer_set.fromint(src_layers & dst_layers)
     return str(res)
 
@@ -35,7 +35,6 @@ def build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name):
     # It is used to generate node ids in the spatio-temporal graph
     # IMPORTANT baseID starts at 1 and not 0
     max_id = sg.vertices['__id'].max()
-    print 'MAX ID:', max_id
 
     def spatio_edge_creation(src, edge, dst):
         """Closure (captures layer_set) to create all the
@@ -54,7 +53,12 @@ def build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name):
         """Closure, capture layer_set and max_id to generate all self-edges for the spt graph"""
         base_src = x['__id']
         base_tgt = x['__id']
-        val = build_edge_bitstring(x['layers'], x['layers'], layer_set)
+
+        l = int(x['layers'])
+        # Set latest layer to 0
+        mask = (1 << l.bit_length() - 1) - 1
+        val = l & mask
+
         layers = layer_set.fromint(val).members()
         return create_edges(layers, base_src, base_tgt, max_id)
 
@@ -68,8 +72,6 @@ def build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name):
     sp_edges = sg.edges.flat_map(['source', 'dest'], generate_sp_edge_sframe, column_types=[int, int])
     # Create the graph from edges
     h = gl.SGraph().add_edges(sp_edges, src_field='source', dst_field='dest')
-
-    print sg.edges
     del sg.edges['sp_edges']
 
     if create_self_edges:
@@ -79,11 +81,10 @@ def build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name):
         # Create new sframe with actual ids
         sp_edges = sg.vertices.flat_map(['source', 'dest'], generate_sp_edge_sframe, column_types=[int, int])
         h = h.add_edges(sp_edges, src_field='source', dst_field='dest')
-        print sg.vertices
         del sg.vertices['sp_edges']
 
     # Add baseid and layer to spt graph
-    h.vertices[layer_name] = h.vertices.apply(lambda x: x['__id'] // max_id, dtype=int)
+    h.vertices[layer_name] = h.vertices.apply(lambda x: (x['__id'] - 1) // max_id, dtype=int)
     # base_src = src - (l * max_id)
     h.vertices[baseid_name] = h.vertices.apply(lambda x: x['__id'] - (x[layer_name] * max_id), dtype=int)
 
