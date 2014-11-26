@@ -23,8 +23,13 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
     layer_set = bitset('Layers', tuple(range(nb_layers)))
     # Aggregate layers per node
     node_signal = signal.groupby(baseid_name, {'layers': gl.aggregate.CONCAT(layer_name)}).sort(baseid_name)
-    # Convert layer number into bitstring and add them as attributes on the nodes
-    layer_bitstring = node_signal.apply(lambda x: layer_set(tuple(x['layers'].tolist())).bits())
+
+    def layers_to_long_str(x):
+        """Convert layer number into bitstring then long str and add them as attributes on the nodes"""
+        return str(layer_set(tuple(x['layers'].tolist())))
+
+    layer_bitstring = node_signal.apply(layers_to_long_str)
+
     # Remove old layers column and replace it with the bitstring one
     node_signal = node_signal.remove_column('layers').add_column(layer_bitstring, 'layers')
 
@@ -43,17 +48,17 @@ def create_signal_graph(g, node_signal, baseid_name, layer_name, verbose=True):
     if isinstance(g, nx.Graph) or isinstance(g, nx.DiGraph):  # convert if needed
         start2 = time.time()
         if verbose:
-            print 'Convert networkx graph to graphlab'
+            print '  Convert networkx graph to graphlab'
 
         p = utils.networkx_to_graphlab(g)
 
         if verbose:
-            print 'Convert networkx graph to graphlab done in:', time.time() - start2, 'seconds'
+            print '  Convert networkx graph to graphlab done in:', time.time() - start2, 'seconds'
 
     # Filter nodes and join from original graph and signal
     good_nodes = p.vertices.join(node_signal, on={'__id': baseid_name}, how='inner')
-    # Filter edges to only keep those with valid endpoints
-    good_edges = p.edges.filter_by(good_nodes['__id'], '__src_id').filter_by(good_nodes['__id'], '__dst_id')
+    # Filter edges
+    good_edges = p.get_edges(src_ids=good_nodes['__id']).join(p.get_edges(dst_ids=good_nodes['__id']))
 
     if verbose:
         print 'Create signal graph done in:', time.time() - start, 'seconds'

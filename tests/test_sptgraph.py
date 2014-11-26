@@ -11,15 +11,70 @@ Tests for `sptgraph` module.
 import unittest
 
 from sptgraph import sptgraph
+from sptgraph import utils
+
+from data import *  # import test data
 
 
 class TestSptgraph(unittest.TestCase):
 
     def setUp(self):
-        pass
+        import graphlab as gl
 
-    def test_something(self):
-        self.assertTrue(True, 'is works')
+    @unittest.skip('Skipping create_node_signal')
+    def test_create_node_signal(self):
+        node_signal, layer_set = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer')
+        self.assertEqual(layer_set([0, 1, 2, 3]), layer_set.supremum)
+        self.assertEqual('15', node_signal['layers'][0])
+        self.assertEqual('6', node_signal['layers'][1])
+        self.assertEqual('6', node_signal['layers'][2])
+        self.assertEqual('6', node_signal['layers'][3])
+
+    @unittest.skip('Skipping networkx_to_graphlab')
+    def test_networkx_to_graphlab(self):
+        g = utils.networkx_to_graphlab(gen_graph(False))
+        self.assertEqual(5, len(g.vertices))
+        self.assertEqual(10, len(g.edges))
+
+        g = utils.networkx_to_graphlab(gen_graph(True))
+        self.assertEqual(5, len(g.vertices))
+        self.assertEqual(5, len(g.edges))
+
+    @unittest.skip('Skipping create_signal_graph')
+    def test_create_signal_graph(self):
+        node_signal, layer_set = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer')
+
+        for is_directed in [True, False]:
+            g = utils.networkx_to_graphlab(gen_graph(is_directed))
+            sg = sptgraph.create_signal_graph(g, node_signal, 'baseID', 'layer')
+
+            # Node 5 is never activated
+            self.assertEqual(4, len(sg.vertices))
+
+            if not is_directed:
+                self.assertEqual(8, len(sg.edges))
+            else:
+                self.assertEqual(4, len(sg.edges))
+
+            actual_columns = set(sg.vertices.column_names())
+            expected_columns = set(['layers', 'node_weight', '__id'])
+            self.assertItemsEqual(expected_columns, actual_columns)
+
+    def test_create_spatio_temporal_graph(self):
+
+        # Undirected, self-edges:
+        g = utils.networkx_to_graphlab(gen_graph(False))
+
+
+        h = sptgraph.create_spatio_temporal_graph(g, gen_signal(), True)
+        print h.vertices.sort('baseID').print_rows(30)
+
+        self.assertEqual(13, h.vertices['__id'].max())
+        self.assertEqual(3, h.vertices['layer'].max())  # layer starts at 0
+        self.assertEqual(10, len(h.vertices))
+        self.assertEqual(19, len(h.edges))
+
+
 
     def tearDown(self):
         pass
