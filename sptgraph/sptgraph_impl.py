@@ -4,7 +4,15 @@ import graphlab as gl
 from ast import literal_eval as make_list
 
 
-def create_edges(layers, base_src, base_tgt, max_id):
+def spatio_edge_creation(src, edge, dst):
+    """Closure (captures layer_set) to create all the
+    spatio-temporal edges from a given spatial edge.
+    """
+    edge['sp_edges'] = str(build_edge_bitstring(src['layers'], dst['layers']))
+    return src, edge, dst
+
+
+def create_edges_from_layers(layers, base_src, base_tgt, max_id):
     edges = list()
     for l in layers:
         src = base_src + (l * max_id)
@@ -15,33 +23,25 @@ def create_edges(layers, base_src, base_tgt, max_id):
 
 def create_edges_from_item(item, key, layer_set, base_src, base_tgt, max_id):
     layers = layer_set.fromint(item[key]).members()
-    return create_edges(layers, base_src, base_tgt, max_id)
+    return create_edges_from_layers(layers, base_src, base_tgt, max_id)
 
 
 def generate_sp_edge_sframe(x):
     return make_list(x['sp_edges'])
 
 
-def build_edge_bitstring(src_bitstring, tgt_bitstring, layer_set):
+def build_edge_bitstring(src_bitstring, tgt_bitstring):
     src_layers = int(src_bitstring)
     dst_layers = int(tgt_bitstring)
     # Right shift
     dst_layers >>= 1
-    res = layer_set.fromint(src_layers & dst_layers)
-    return str(res)
+    return src_layers & dst_layers
 
 
 def build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name):
     # It is used to generate node ids in the spatio-temporal graph
     # IMPORTANT baseID starts at 1 and not 0
     max_id = sg.vertices['__id'].max()
-
-    def spatio_edge_creation(src, edge, dst):
-        """Closure (captures layer_set) to create all the
-        spatio-temporal edges from a given spatial edge.
-        """
-        edge['sp_edges'] = build_edge_bitstring(src['layers'], dst['layers'], layer_set)
-        return src, edge, dst
 
     def expand_edge_layers(x):
         """Closure, capture layer_set and max_id to generate all edges for the spt graph"""
@@ -53,14 +53,9 @@ def build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name):
         """Closure, capture layer_set and max_id to generate all self-edges for the spt graph"""
         base_src = x['__id']
         base_tgt = x['__id']
-
-        l = int(x['layers'])
-        # Set latest layer to 0
-        mask = (1 << l.bit_length() - 1) - 1
-        val = l & mask
-
+        val = build_edge_bitstring(x['layers'], x['layers'])
         layers = layer_set.fromint(val).members()
-        return create_edges(layers, base_src, base_tgt, max_id)
+        return create_edges_from_layers(layers, base_src, base_tgt, max_id)
 
     # Create empty field which will hold the bitstring for the edge creation
     sg.edges['sp_edges'] = ''
