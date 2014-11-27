@@ -15,19 +15,16 @@ requirements = [
     "GraphLab-Create",
     "bitsets",
     "networkx",
-    "numpy",
     "pandas",
     "wheel"
 ]
 
-test_requirements = [
-    # TODO: put package test requirements here
-]
+test_requirements = []
 
 setup(
     name='sptgraph',
     version='0.1.0',
-    description='Spatio-Temporal Graph repo',
+    description='Spatio-Temporal Graph',
     long_description=readme + '\n\n' + history,
     author='Kirell Benzi',
     author_email='kirell.benzi@epfl.ch',

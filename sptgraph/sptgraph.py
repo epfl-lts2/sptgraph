@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
-import os
 import time
+
 import networkx as nx
+import pandas as pd
 
 import graphlab as gl
 from bitsets import bitset
@@ -13,11 +14,16 @@ import sptgraph_impl
 
 
 def create_node_signal(data, baseid_name, layer_name, verbose=True):
+    """Create signal on the node from pandas DataFrame or Graphlab SFrame"""
     start = time.time()
     if verbose:
         print 'Create node signal'
 
-    signal = gl.SFrame(data)  # convert panda dataframe or graphlab sframe
+    if isinstance(data, pd.DataFrame):
+        signal = gl.SFrame(data[[baseid_name, layer_name]])
+    else:
+        signal = gl.SFrame(data)
+
     nb_layers = signal[layer_name].max() + 1
     # Create the bitspace
     layer_set = bitset('Layers', tuple(range(nb_layers)))
