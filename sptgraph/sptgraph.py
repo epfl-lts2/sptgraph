@@ -81,10 +81,10 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
     node_signal, layer_set = create_node_signal(data, baseid_name, layer_name, verbose=verbose)
     sg = create_signal_graph(g, node_signal, baseid_name, layer_name, verbose=verbose)
     # Create graph
-    h = sptgraph_impl.build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name)
+    h, max_id = sptgraph_impl.build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name)
 
     if verbose:
         print 'Create spatio-temporal graph done in:', time.time() - start, 'seconds'
 
-    return h
+    return h, max_id
 
