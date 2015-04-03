@@ -5,9 +5,6 @@ from ast import literal_eval as make_list
 
 
 def spatio_edge_creation(src, edge, dst):
-    """Closure (captures layer_set) to create all the
-    spatio-temporal edges from a given spatial edge.
-    """
     edge['sp_edges'] = str(build_edge_bitstring(src['layers'], dst['layers']))
     return src, edge, dst
 
