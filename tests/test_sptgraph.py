@@ -23,8 +23,7 @@ class TestSptgraph(unittest.TestCase):
 
     # @unittest.skip('Skipping create_node_signal')
     def test_create_node_signal(self):
-        node_signal, layer_set = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer', False)
-        self.assertEqual(layer_set([0, 1, 2, 3]), layer_set.supremum)
+        node_signal = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer', False)
         self.assertEqual('15', node_signal['layers'][0])
         self.assertEqual('6', node_signal['layers'][1])
         self.assertEqual('6', node_signal['layers'][2])
@@ -42,7 +41,7 @@ class TestSptgraph(unittest.TestCase):
 
     # @unittest.skip('Skipping create_signal_graph')
     def test_create_signal_graph(self):
-        node_signal, layer_set = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer', False)
+        node_signal = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer', False)
 
         for is_directed in [True, False]:
             g = utils.networkx_to_graphlab(gen_graph(is_directed))
@@ -57,7 +56,7 @@ class TestSptgraph(unittest.TestCase):
                 self.assertEqual(4, len(sg.edges))
 
             actual_columns = set(sg.vertices.column_names())
-            expected_columns = set(['layers', 'node_weight', '__id'])
+            expected_columns = {'layers', 'node_weight', '__id'}
             self.assertItemsEqual(expected_columns, actual_columns)
 
     def test_create_spatio_temporal_graph(self):

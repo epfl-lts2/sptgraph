@@ -4,30 +4,12 @@ import graphlab as gl
 from ast import literal_eval as make_list
 
 
-def spatio_edge_creation(src, edge, dst):
-    edge['sp_edges'] = str(build_edge_bitstring(src['layers'], dst['layers']))
+def create_causal_edges_bitstring(src, edge, dst):
+    edge['sp_edges'] = str(shift_and_bitstrings(src['layers'], dst['layers']))
     return src, edge, dst
 
 
-def create_edges_from_layers(layers, base_src, base_tgt, max_id):
-    edges = list()
-    for l in layers:
-        src = base_src + (l * max_id)
-        tgt = base_tgt + ((l + 1) * max_id)  # on next layer
-        edges.append([src, tgt])
-    return str(edges)
-
-
-def create_edges_from_item(item, key, layer_set, base_src, base_tgt, max_id):
-    layers = layer_set.fromint(item[key]).members()
-    return create_edges_from_layers(layers, base_src, base_tgt, max_id)
-
-
-def generate_sp_edge_sframe(x):
-    return make_list(x['sp_edges'])
-
-
-def build_edge_bitstring(src_bitstring, tgt_bitstring):
+def shift_and_bitstrings(src_bitstring, tgt_bitstring):
     src_layers = int(src_bitstring)
     dst_layers = int(tgt_bitstring)
     # Right shift
@@ -35,29 +17,52 @@ def build_edge_bitstring(src_bitstring, tgt_bitstring):
     return src_layers & dst_layers
 
 
-def build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name):
-    # It is used to generate node ids in the spatio-temporal graph
+def expand_causal_edges_from_bitfield(bitfield, base_src, base_tgt, max_id):
+    edges = list()
+    # Find all activated causal edges
+    while bitfield:
+        # extract lsb on 2s complement machine
+        index = bitfield & -bitfield
+        bitfield ^= index
+
+        # Get activated layer number (log2)
+        layer = -1
+        while index:
+            index >>= 1
+            layer += 1
+        src = base_src + (layer * max_id)
+        tgt = base_tgt + ((layer + 1) * max_id)  # on next layer
+        edges.append([src, tgt])
+
+    return str(edges)
+
+
+def build_sptgraph(sg, create_self_edges, baseid_name, layer_name):
+    # It is used to generate node ids in the causal multilayer graph
     # IMPORTANT baseID starts at 1 and not 0
     max_id = sg.vertices['__id'].max()
 
     def expand_edge_layers(x):
-        """Closure, capture layer_set and max_id to generate all edges for the spt graph"""
+        """Closure, capture max_id to generate all edges for the graph"""
         base_src = x['__src_id']
         base_tgt = x['__dst_id']
-        return create_edges_from_item(x, 'sp_edges', layer_set, base_src, base_tgt, max_id)
+        bitfield = int(x['sp_edges'])
+        return expand_causal_edges_from_bitfield(bitfield, base_src, base_tgt, max_id)
 
     def expand_vertex_layers(x):
-        """Closure, capture layer_set and max_id to generate all self-edges for the spt graph"""
+        """Closure, capture max_id to generate all edges for the graph"""
         base_src = x['__id']
         base_tgt = x['__id']
-        val = build_edge_bitstring(x['layers'], x['layers'])
-        layers = layer_set.fromint(val).members()
-        return create_edges_from_layers(layers, base_src, base_tgt, max_id)
+        bitfield = shift_and_bitstrings(x['layers'], x['layers'])
+        return expand_causal_edges_from_bitfield(bitfield, base_src, base_tgt, max_id)
+
+    def generate_sp_edge_sframe(x):
+        return make_list(x['sp_edges'])
 
     # Create empty field which will hold the bitstring for the edge creation
     sg.edges['sp_edges'] = ''
     # Create edge bitstring
-    sg = sg.triple_apply(spatio_edge_creation, mutated_fields=['sp_edges'])
+    sg = sg.triple_apply(create_causal_edges_bitstring, mutated_fields=['sp_edges'])
     # Expand to actual source and destination as a string
     sg.edges['sp_edges'] = sg.edges.apply(expand_edge_layers, dtype=str)
     # Create new sframe with actual ids

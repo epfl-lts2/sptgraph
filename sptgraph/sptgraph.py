@@ -15,6 +15,11 @@ import sptgraph_impl
 
 def create_node_signal(data, baseid_name, layer_name, verbose=True):
     """Create signal on the node from pandas DataFrame or Graphlab SFrame"""
+
+    def layers_to_long_str(x):
+        """Convert layer number into bitstring then long str and add them as attributes on the nodes"""
+        return str(layer_set(tuple(x['layers'])))
+
     start = time.time()
     if verbose:
         print 'Create node signal'
@@ -29,21 +34,14 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
     layer_set = bitset('Layers', tuple(range(nb_layers)))
     # Aggregate layers per node
     node_signal = signal.groupby(baseid_name, {'layers': gl.aggregate.CONCAT(layer_name)}).sort(baseid_name)
-
-    def layers_to_long_str(x):
-        """Convert layer number into bitstring then long str and add them as attributes on the nodes"""
-        # return str(layer_set(tuple(x['layers'].tolist())))
-        return str(layer_set(tuple(x['layers'])))
-
     layer_bitstring = node_signal.apply(layers_to_long_str)
-
     # Remove old layers column and replace it with the bitstring one
     node_signal = node_signal.remove_column('layers').add_column(layer_bitstring, 'layers')
 
     if verbose:
         print 'Create node signal done in:', time.time() - start, 'seconds'
 
-    return node_signal, layer_set
+    return node_signal
 
 
 def create_signal_graph(g, node_signal, baseid_name, layer_name, verbose=True):
@@ -79,16 +77,10 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
     if verbose:
         print 'Create spatio-temporal graph'
 
-    # TODO remove layer set and change by this
-    # while field:
-    #     temp = field & -field
-    #     field ^= temp
-    #     print int(math.log(temp, 2))
-
-    node_signal, layer_set = create_node_signal(data, baseid_name, layer_name, verbose=verbose)
+    node_signal = create_node_signal(data, baseid_name, layer_name, verbose=verbose)
     sg = create_signal_graph(g, node_signal, baseid_name, layer_name, verbose=verbose)
     # Create graph
-    h, max_id = sptgraph_impl.build_sptgraph(sg, layer_set, create_self_edges, baseid_name, layer_name)
+    h, max_id = sptgraph_impl.build_sptgraph(sg, create_self_edges, baseid_name, layer_name)
 
     if verbose:
         print 'Create spatio-temporal graph done in:', time.time() - start, 'seconds'
