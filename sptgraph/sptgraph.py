@@ -32,7 +32,8 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
 
     def layers_to_long_str(x):
         """Convert layer number into bitstring then long str and add them as attributes on the nodes"""
-        return str(layer_set(tuple(x['layers'].tolist())))
+        # return str(layer_set(tuple(x['layers'].tolist())))
+        return str(layer_set(tuple(x['layers'])))
 
     layer_bitstring = node_signal.apply(layers_to_long_str)
 
