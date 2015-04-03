@@ -23,7 +23,7 @@ def to_sarray_dt(series):
     return sa
 
 
-def from_pandas_dataframe(df):
+def from_pandas(df):
     """Issue importing datetime64[ns] Series into graphlab"""
     msk = df.dtypes != '<M8[ns]'
     sf = gl.SFrame(df.loc[:, msk])  # no issues (normally)

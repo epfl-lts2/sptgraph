@@ -24,7 +24,7 @@ test_requirements = []
 setup(
     name='sptgraph',
     version='0.1.0',
-    description='Spatio-Temporal Graph',
+    description='Causal multilayer graph',
     long_description=readme + '\n\n' + history,
     author='Kirell Benzi',
     author_email='kirell.benzi@epfl.ch',

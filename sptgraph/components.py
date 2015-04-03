@@ -21,7 +21,7 @@ def get_component_sframe(g, baseid_name='baseID', layer_name='layer'):
         'nodes': gl.aggregate.CONCAT('__id'),
         layers: gl.aggregate.CONCAT(layer_name),
         baseid_name + 's': gl.aggregate.CONCAT(baseid_name),
-        'size': gl.aggregate.COUNT('__id')
+        'node_count': gl.aggregate.COUNT('__id')
     })
 
     comps['width'] = comps.apply(lambda x: len(np.unique(x[layers])))
