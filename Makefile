@@ -1,4 +1,26 @@
-.PHONY: clean-pyc clean-build docs clean
+rwildcard=$(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2) $(filter $(subst *,%,$2),$d))
+
+CC := gcc
+CXX := g++
+CFLAGS := -std=c++11 -shared -fPIC
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+        CXX := clang
+	CFLAGS += --stdlib=libc++ -undefined dynamic_lookup
+endif
+
+SRCS := $(call rwildcard, sptgraph/, *.cpp)
+TARGETS := $(SRCS:%.cpp=%.so)
+
+
+.PHONY: clean-pyc clean-build docs clean all
+
+all: $(TARGETS)
+
+%.so: %.cpp
+	$(CXX) -o $@ $(CFLAGS) -I $(GRAPHLAB_SDK_HOME) $^
+
 
 help:
 	@echo "clean - remove all build, test, coverage and Python artifacts"
@@ -12,8 +34,12 @@ help:
 	@echo "docs - generate Sphinx HTML documentation, including API docs"
 	@echo "release - package and upload a release"
 	@echo "dist - package"
+	@echo "all - build cpp extension for graphlab"
 
-clean: clean-build clean-pyc clean-test
+clean: clean-build clean-pyc clean-test clean-so
+
+clean-so:
+	find . -name '*.so' -exec rm -f {} +
 
 clean-build:
 	rm -fr build/

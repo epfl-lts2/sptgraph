@@ -44,3 +44,10 @@ docs/_build
 
 # IDEA
 .idea/
+
+# QtCreator
+.config
+.creator
+.creator.user
+.files
+.includes
