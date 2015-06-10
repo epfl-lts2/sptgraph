@@ -11,7 +11,10 @@ from bitsets import bitset
 # Project's imports
 import utils
 import sptgraph_impl
+import ext.sptgraph_fast as fast
 
+import logging
+LOGGER = logging.getLogger(__name__)
 
 def create_node_signal(data, baseid_name, layer_name, verbose=True):
     """Create signal on the node from pandas DataFrame or Graphlab SFrame"""
@@ -33,7 +36,7 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
     # Create the bitspace
     layer_set = bitset('Layers', tuple(range(nb_layers)))
     # Aggregate layers per node
-    node_signal = signal.groupby(baseid_name, {'layers': gl.aggregate.CONCAT(layer_name)}).sort(baseid_name)
+    node_signal = signal.groupby(baseid_name, {'layers': gl.aggregate.CONCAT(layer_name)})
     layer_bitstring = node_signal.apply(layers_to_long_str)
     # Remove old layers column and replace it with the bitstring one
     node_signal = node_signal.remove_column('layers').add_column(layer_bitstring, 'layers')
@@ -42,6 +45,19 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
         print 'Create node signal done in:', time.time() - start, 'seconds'
 
     return node_signal
+
+
+def create_node_signal2(data, baseid_name, layer_name, verbose=True):
+    start = time.time()
+    if isinstance(data, pd.DataFrame):
+        signal = gl.SFrame(data[[baseid_name, layer_name]])
+    else:
+        signal = gl.SFrame(data)
+
+    nb_layers = signal[layer_name].max() + 1  # starts at 0
+    res = fast.aggregate_layers(signal, baseid_name, layer_name, nb_layers)
+    LOGGER.info('Create node signal done in: %s', time.time() - start)
+    return res
 
 
 def create_signal_graph(g, node_signal, baseid_name, layer_name, verbose=True):

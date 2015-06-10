@@ -3,6 +3,7 @@
 import datetime
 import graphlab as gl
 import pandas as pd
+import ctypes
 
 def networkx_to_graphlab(g):
     p = gl.SGraph()
@@ -32,3 +33,11 @@ def from_pandas(df):
         v = to_sarray_dt(df.loc[:, i])
         sf.add_column(v, i)
     return sf
+
+
+def reform_layer_int_from_blocks(blocks):
+    res = ''
+    for b in blocks[::-1]:  # reverse the order
+        res += bin(ctypes.c_ulong(b).value)[2:]
+    res = '0b' + res
+    return int(res, 2)

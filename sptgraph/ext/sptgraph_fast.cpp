@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright (C) 2015 EPFL
  * All rights reserved.
  *
@@ -6,8 +6,16 @@
  * of the GPLv2 license. See the LICENSE file for details.
  */
 
+#include <fstream>
 #include <string>
 #include <vector>
+
+
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/stream.hpp>
+#include <boost/iostreams/copy.hpp>
+#include <boost/dynamic_bitset.hpp>
+
 #include <graphlab/flexible_type/flexible_type.hpp>
 #include <graphlab/sdk/toolkit_function_macros.hpp>
 #include <graphlab/sdk/toolkit_class_macros.hpp>
@@ -16,10 +24,38 @@
 #include <graphlab/sdk/gl_sframe.hpp>
 #include <graphlab/sdk/gl_sgraph.hpp>
 
-#include <boost/dynamic_bitset.hpp>
+
+namespace io = boost::iostreams;
 
 using namespace graphlab;
+static size_t NB_LAYERS = 0;  // Pass bitset size as a global variable
 
+std::string compress_zlib(const std::string& data)
+{
+    std::stringstream compressed;
+    std::stringstream decompressed;
+    decompressed << data;
+    boost::iostreams::filtering_streambuf<io::input> out;
+    out.push(io::zlib_compressor());
+    out.push(decompressed);
+    boost::iostreams::copy(out, compressed);
+    return compressed.str();
+}
+
+std::string decompress_zlib(const std::string& data)
+{
+    std::stringstream compressed;
+    std::stringstream decompressed;
+    compressed << data;
+    boost::iostreams::filtering_streambuf<io::input> in;
+    in.push(io::zlib_decompressor());
+    in.push(compressed);
+    boost::iostreams::copy(in, decompressed);
+    return decompressed.str();
+}
+
+
+namespace graphlab {
 
 class layer_aggregator: public group_aggregate_value
 {
@@ -27,14 +63,8 @@ public:
 
     layer_aggregator()
         : group_aggregate_value()
-    {
-    }
-
-    layer_aggregator(const size_t* nb_layers)  // only supports const pointers
-        : group_aggregate_value()
-        , m_bitset(*nb_layers)
-    {
-    }
+        , m_bitset(NB_LAYERS)
+    {}
 
     virtual ~layer_aggregator() = default;
 
@@ -44,19 +74,22 @@ public:
     virtual void add_element_simple(const flexible_type& flex) override
     {
         int layer = flex.to<flex_int>();
-        m_bitset[layer] = 1;
+        m_bitset.set(layer);
     }
 
     virtual void combine(const group_aggregate_value& other) override
     {
+        logprogress_stream  << "Combine: " << ((const layer_aggregator&)(other)).m_bitset << std::endl;
         m_bitset |= ((const layer_aggregator&)(other)).m_bitset;
     }
 
     virtual flexible_type emit() const override
     {
-        std::string ret;
-        boost::to_string(m_bitset, ret);
-        return ret;
+        // block is unsigned long
+        std::vector<flexible_type> v(m_bitset.num_blocks());
+        boost::to_block_range(m_bitset, v.begin());
+
+        return v;
     }
 
     virtual bool support_type(flex_type_enum type) const override
@@ -66,22 +99,17 @@ public:
 
     virtual flex_type_enum set_input_types(const std::vector<flex_type_enum>& types) override
     {
-         return flex_type_enum::STRING;
+         return flex_type_enum::LIST;
     }
 
     virtual void save(oarchive& oarc) const override
     {
-        std::string ret;
-        boost::to_string(m_bitset, ret);
-        oarc << ret;
+        oarc << m_bitset;
     }
 
     virtual void load(iarchive& iarc) override
     {
-        std::string tmp;
-        iarc >> tmp;
-        boost::dynamic_bitset<> x(tmp);
-        m_bitset = x;
+        iarc >> m_bitset;
     }
 
 private:
@@ -89,14 +117,55 @@ private:
 };
 
 
+namespace archive_detail {
 
-gl_sframe aggregate_layers(const gl_sframe& sf, const std::string& key_column, const std::string& value_column, size_t nb_layers)
+template <typename OutArcType, typename Block, typename Allocator>
+struct serialize_impl<OutArcType, boost::dynamic_bitset<Block, Allocator>, false>
 {
-    auto agg = aggregate::make_aggregator<layer_aggregator>({value_column}, nb_layers);
-    gl_sframe result_sframe = sf.groupby( {key_column}, {{"layers", agg}});
+    static void exec(OutArcType& arc, const boost::dynamic_bitset<Block, Allocator> & t)
+    {
+        // Serialize bitset size
+        std::size_t size = t.size();
+        arc << size;
+        // Convert bitset into a vector
+        std::vector< Block > v( t.num_blocks() );
+        boost::to_block_range( t, v.begin() );
+        // Serialize vector
+        arc << v;
+    }
+};
+
+template <typename InArcType, typename Block, typename Allocator>
+struct deserialize_impl<InArcType, boost::dynamic_bitset<Block, Allocator>, false>
+{
+    static void exec(InArcType& iarc,  boost::dynamic_bitset<Block, Allocator>& t)
+    {
+        std::size_t size;
+        iarc >> size;
+        t.resize( size );
+        // Load vector
+        std::vector< Block > v;
+        iarc >> v;
+        // Convert vector into a bitset
+        boost::from_block_range( v.begin() , v.end() , t );
+    }
+};
+
+} // end namspace archive_detail
+
+gl_sframe aggregate_layers(const gl_sframe& sf, const std::string& key_column,
+                           const std::string& value_column, size_t nb_layers)
+{
+    NB_LAYERS = nb_layers;      // Set static global variable ...
+    gl_sframe result_sframe = sf.groupby( {key_column},
+        {{"layers", aggregate::make_aggregator<layer_aggregator>({value_column})}});
     return result_sframe;
 }
 
+} // end namespace graphlab
+
+/* Function registration, export to python */
 BEGIN_FUNCTION_REGISTRATION
 REGISTER_FUNCTION(aggregate_layers, "data", "key_column", "value_column", "nb_layers");
 END_FUNCTION_REGISTRATION
+
