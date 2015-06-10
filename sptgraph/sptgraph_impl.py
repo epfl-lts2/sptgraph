@@ -85,4 +85,4 @@ def build_sptgraph(sg, create_self_edges, baseid_name, layer_name):
     # base_src = src - (l * max_id)
     h.vertices[baseid_name] = h.vertices.apply(lambda x: x['__id'] - (x[layer_name] * max_id), dtype=int)
 
-    return h, max_id
+    return h

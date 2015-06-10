@@ -6,6 +6,7 @@
 # Packages
 *.egg
 *.egg-info
+.eggs/
 dist
 build
 eggs
@@ -46,8 +47,8 @@ docs/_build
 .idea/
 
 # QtCreator
-.config
-.creator
-.creator.user
-.files
-.includes
+*.config
+*.creator
+*.creator.user
+*.files
+*.includes

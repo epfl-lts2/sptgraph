@@ -19,7 +19,8 @@ requirements = [
     "wheel"
 ]
 
-test_requirements = []
+test_requirements = ["GraphLab-Create"
+]
 
 setup(
     name='sptgraph',

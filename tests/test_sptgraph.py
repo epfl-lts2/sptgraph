@@ -69,7 +69,7 @@ class TestSptgraph(unittest.TestCase):
         # | 3-3  |
         # | |X|  |
         # L 4-4--|
-        h, max_id = sptgraph.create_spatio_temporal_graph(g, gen_signal(), True, verbose=False)
+        h = sptgraph.create_spatio_temporal_graph(g, gen_signal(), True, verbose=False)
         self.assertEqual(13, h.vertices['__id'].max())
         self.assertEqual(3, h.vertices['layer'].max())  # layer starts at 0
         self.assertEqual(10, len(h.vertices))
@@ -77,7 +77,7 @@ class TestSptgraph(unittest.TestCase):
 
         # Directed self-edge
         g = utils.networkx_to_graphlab(gen_graph(True))
-        h, max_id = sptgraph.create_spatio_temporal_graph(g, gen_signal(), True, verbose=False)
+        h = sptgraph.create_spatio_temporal_graph(g, gen_signal(), True, verbose=False)
         self.assertEqual(13, h.vertices['__id'].max())
         self.assertEqual(3, h.vertices['layer'].max())  # layer starts at 0
         self.assertEqual(10, len(h.vertices))
@@ -85,7 +85,7 @@ class TestSptgraph(unittest.TestCase):
 
         # Undirected no self-edge
         g = utils.networkx_to_graphlab(gen_graph(False))
-        h, max_id = sptgraph.create_spatio_temporal_graph(g, gen_signal(), False, verbose=False)
+        h = sptgraph.create_spatio_temporal_graph(g, gen_signal(), False, verbose=False)
         self.assertEqual(13, h.vertices['__id'].max())
         self.assertEqual(3, h.vertices['layer'].max())  # layer starts at 0
         self.assertEqual(10, len(h.vertices))
@@ -93,7 +93,7 @@ class TestSptgraph(unittest.TestCase):
 
         # Directed no self-edge
         g = utils.networkx_to_graphlab(gen_graph(True))
-        h, max_id = sptgraph.create_spatio_temporal_graph(g, gen_signal(), False, verbose=False)
+        h = sptgraph.create_spatio_temporal_graph(g, gen_signal(), False, verbose=False)
         self.assertEqual(12, h.vertices['__id'].max())
         self.assertEqual(2, h.vertices['layer'].max())  # layer starts at 0
         self.assertEqual(8, len(h.vertices))
