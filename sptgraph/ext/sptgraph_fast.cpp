@@ -11,9 +11,6 @@
 #include <vector>
 
 
-#include <boost/iostreams/filtering_streambuf.hpp>
-#include <boost/iostreams/stream.hpp>
-#include <boost/iostreams/copy.hpp>
 #include <boost/dynamic_bitset.hpp>
 
 #include <graphlab/flexible_type/flexible_type.hpp>
@@ -29,30 +26,6 @@ namespace io = boost::iostreams;
 
 using namespace graphlab;
 static size_t NB_LAYERS = 0;  // Pass bitset size as a global variable
-
-std::string compress_zlib(const std::string& data)
-{
-    std::stringstream compressed;
-    std::stringstream decompressed;
-    decompressed << data;
-    boost::iostreams::filtering_streambuf<io::input> out;
-    out.push(io::zlib_compressor());
-    out.push(decompressed);
-    boost::iostreams::copy(out, compressed);
-    return compressed.str();
-}
-
-std::string decompress_zlib(const std::string& data)
-{
-    std::stringstream compressed;
-    std::stringstream decompressed;
-    compressed << data;
-    boost::iostreams::filtering_streambuf<io::input> in;
-    in.push(io::zlib_decompressor());
-    in.push(compressed);
-    boost::iostreams::copy(in, decompressed);
-    return decompressed.str();
-}
 
 
 namespace graphlab {
