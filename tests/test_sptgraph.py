@@ -45,7 +45,7 @@ class TestSptgraph(unittest.TestCase):
 
         for is_directed in [True, False]:
             g = utils.networkx_to_graphlab(gen_graph(is_directed))
-            sg = sptgraph.create_signal_graph(g, node_signal, 'baseID', 'layer', verbose=False)
+            sg = sptgraph.reduce_graph_to_signal(g, node_signal, 'baseID', 'layer', verbose=False)
 
             # Node 5 is never activated
             self.assertEqual(4, len(sg.vertices))
