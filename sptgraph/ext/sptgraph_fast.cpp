@@ -9,7 +9,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
-
+#include <stdint.h>
 
 #include <boost/dynamic_bitset.hpp>
 
@@ -70,7 +70,7 @@ struct deserialize_impl<InArcType, boost::dynamic_bitset<Block, Allocator>, fals
 flexible_type bitset_to_flexible(const Bitset& b)
 {
     // block is unsigned long
-    std::vector<flexible_type> v(b.num_blocks());
+    flex_list v(b.num_blocks());
     boost::to_block_range(b, v.begin());
     return v;
 }
@@ -157,6 +157,64 @@ private:
 };
 
 
+Bitset shift_add_bitsets(Bitset& src, Bitset& tgt)
+{
+    tgt >>= 1;
+    return src & tgt;
+}
+
+flex_list expand_causal_edges(const Bitset& bitfield, const flexible_type& base_src,
+                              const flexible_type& base_tgt, uint64_t max_id)
+{
+    Bitset::size_type count = bitfield.count();
+
+//    logprogress_stream << "base_src: " << base_src << std::endl;
+//    logprogress_stream << "base_tgt: " << base_tgt << std::endl;
+//    logprogress_stream << "active_layers: " << count << std::endl;
+
+    flex_list edges;
+    edges.reserve(count * 2);
+
+    // All active layers
+    Bitset::size_type cur_layer = bitfield.find_first();
+
+    while (count) {
+//        logprogress_stream << "cur layer: " << cur_layer << std::endl;
+        uint64_t src = base_src.to<uint64_t>() + (cur_layer * max_id);
+        uint64_t tgt = base_tgt.to<uint64_t>() + ((cur_layer + 1) * max_id);
+        edges.push_back(src);
+        edges.push_back(tgt);
+        cur_layer = bitfield.find_next(cur_layer);
+        count--;
+    }
+
+//    logprogress_stream << "edges: " << edges << std::endl;
+    return edges;
+}
+
+// Triple apply function to create all causal edges
+struct create_causal_edges
+{
+    create_causal_edges(uint64_t maxx_id)
+        : max_id(maxx_id)
+    {
+    }
+
+    uint64_t max_id;
+
+    void operator()(edge_triple& triple)
+    {
+        auto src_data = bitset_from_flexible(triple.source["layers"]);
+        auto tgt_data = bitset_from_flexible(triple.target["layers"]);
+
+        auto active_layers = shift_add_bitsets(src_data, tgt_data);
+        auto res = expand_causal_edges(active_layers, triple.source["__id"],
+                                       triple.target["__id"], max_id);
+        triple.edge["sp_edges"] = res;
+    }
+};
+
+
 gl_sframe aggregate_layers(const gl_sframe& sf, const std::string& key_column,
                            const std::string& value_column, size_t nb_layers)
 {
@@ -166,35 +224,68 @@ gl_sframe aggregate_layers(const gl_sframe& sf, const std::string& key_column,
     return result_sframe;
 }
 
-
-Bitset shift_add_bitsets(Bitset& src, Bitset& tgt)
+flex_list flatten_edges(const flexible_type& values)
 {
-    tgt >>= 1;
-    return src & tgt;
+    flex_list res;  // results
+    flex_list elems = values.to<flex_list>();
+    for (size_t i = 0; i < elems.size() - 1; i += 2) {
+        flex_list pair(2);
+        pair[0] = elems[i];
+        pair[1] = elems[i+1];
+        res.push_back(pair);
+    }
+
+    logprogress_stream << "flatten_edges: " << res << std::endl;
+    return res;
 }
 
-// Triple apply function to create all causal edges
-void create_causal_edges(edge_triple& triple)
-{
-    auto src_data = bitset_from_flexible(triple.source["layers"]);
-    auto tgt_data = bitset_from_flexible(triple.target["layers"]);
-
-    auto res = bitset_to_flexible(shift_add_bitsets(src_data, tgt_data));
-
-    // Image seems to pass as a valid type for storage ...
-    //    triple.edge["sp_edges"] = res;
-//    logprogress_stream <<  g.edges()["sp_edges"];
-    // TODO unpack
-}
-
-gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
+gl_sframe build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
                          const std::string& layer_key, bool with_self_edges)
 {
-//    g.vertices().add_column(flex_image(), "sp_edges");
-    g.edges().add_column(flex_image(), "sp_edges");
-    g = g.triple_apply(create_causal_edges, {"sp_edges"});
-    return g;
+    // Create SArray of flex_list to store causal edges
+    auto edge_count = g.num_edges();
+    flex_list l(edge_count, flex_list());
+    gl_sarray a(l, flex_type_enum::LIST);
+    g.edges().add_column(a, "sp_edges");
+
+    // Find max base id
+    auto max_id = g.vertices()["__id"].max();
+    g = g.triple_apply(create_causal_edges(max_id), {"sp_edges"});
+
+    // TODO iter by hand ?
+    gl_sarray packed_edges = g.edges()["sp_edges"].apply(flatten_edges, flex_type_enum::LIST);
+//    logprogress_stream << "packed_edges: " << g.edges()["sp_edges"] << std::endl;
+    gl_sframe edges = packed_edges.unpack("X", {flex_type_enum::LIST, flex_type_enum::LIST});
+//    logprogress_stream << "edges: " << edges << std::endl;
+
+    // Apply to create gl_sarray(flex_list(src, tgt))
+    // unpack to create sframe with src and tgt columns
+    return edges;
 }
+
+/* OPTIONS */
+
+// 1) Dump to file gl_array
+// 2) Single threaded pass
+
+
+// single threaded
+
+//for(const auto& val: arr.range_iterator()) {
+//  std::cout << val << "\n";
+//}
+
+
+// Cast gl_sframe in unity_sframe_base ?
+
+//std::shared_ptr<unity_sframe_base> unity_sframe::flat_map(
+//    const std::string& lambda,
+//    std::vector<std::string> column_names,
+//    std::vector<flex_type_enum> column_types,
+//    bool skip_undefined,
+//    int seed);
+
+
 
 } // end namespace graphlab
 
