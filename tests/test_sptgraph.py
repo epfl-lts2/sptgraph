@@ -11,6 +11,7 @@ Tests for `sptgraph` module.
 import unittest
 
 from sptgraph import sptgraph
+
 from sptgraph import utils
 
 from data import *  # import test data

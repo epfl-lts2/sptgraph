@@ -167,11 +167,6 @@ flex_list expand_causal_edges(const Bitset& bitfield, const flexible_type& base_
                               const flexible_type& base_tgt, uint64_t max_id)
 {
     Bitset::size_type count = bitfield.count();
-
-//    logprogress_stream << "base_src: " << base_src << std::endl;
-//    logprogress_stream << "base_tgt: " << base_tgt << std::endl;
-//    logprogress_stream << "active_layers: " << count << std::endl;
-
     flex_list edges;
     edges.reserve(count * 2);
 
@@ -179,7 +174,6 @@ flex_list expand_causal_edges(const Bitset& bitfield, const flexible_type& base_
     Bitset::size_type cur_layer = bitfield.find_first();
 
     while (count) {
-//        logprogress_stream << "cur layer: " << cur_layer << std::endl;
         uint64_t src = base_src.to<uint64_t>() + (cur_layer * max_id);
         uint64_t tgt = base_tgt.to<uint64_t>() + ((cur_layer + 1) * max_id);
         edges.push_back(src);
@@ -187,8 +181,6 @@ flex_list expand_causal_edges(const Bitset& bitfield, const flexible_type& base_
         cur_layer = bitfield.find_next(cur_layer);
         count--;
     }
-
-//    logprogress_stream << "edges: " << edges << std::endl;
     return edges;
 }
 
@@ -224,18 +216,14 @@ gl_sframe aggregate_layers(const gl_sframe& sf, const std::string& key_column,
     return result_sframe;
 }
 
-flex_list flatten_edges(const flexible_type& values)
+flex_list flatten_half_edges(const flexible_type& values, bool source)
 {
     flex_list res;  // results
+    size_t i = source ? 0: 1;
     flex_list elems = values.to<flex_list>();
-    for (size_t i = 0; i < elems.size() - 1; i += 2) {
-        flex_list pair(2);
-        pair[0] = elems[i];
-        pair[1] = elems[i+1];
-        res.push_back(pair);
+    for (; i < elems.size() - 1; i += 2) {
+       res.push_back(elems[i]);
     }
-
-    logprogress_stream << "flatten_edges: " << res << std::endl;
     return res;
 }
 
@@ -252,13 +240,6 @@ gl_sframe flatten_edges_1pass(const gl_sarray& sa)
         }
     }
     return gl_sframe({{"src", src}, {"tgt", tgt}});
-}
-
-gl_sframe flatten_edges_2pass(const gl_sarray& sa)
-{
-    gl_sframe res;
-    // TODO
-    return res;
 }
 
 std::map<std::string, size_t> get_column_mapping(const gl_sgraph& g)
@@ -293,6 +274,7 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
             triple.edge["sp_edges"] = create_causal_edges(max_id, triple.source, triple.target);
         }, {"sp_edges"}
     );
+
     auto edges = flatten_edges_1pass(g.edges()["sp_edges"]);
 
     // Add triple apply edges
@@ -325,33 +307,7 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
     return h;
 }
 
-/* OPTIONS */
-
-// 1) Dump to file gl_array
-// 2) Single threaded pass
-
-
-// single threaded
-
-//for(const auto& val: arr.range_iterator()) {
-//  std::cout << val << "\n";
-//}
-
-
-// Cast gl_sframe in unity_sframe_base ?
-
-//std::shared_ptr<unity_sframe_base> unity_sframe::flat_map(
-//    const std::string& lambda,
-//    std::vector<std::string> column_names,
-//    std::vector<flex_type_enum> column_types,
-//    bool skip_undefined,
-//    int seed);
-
-
-
 } // end namespace graphlab
-
-
 
 /* Function registration, export to python */
 BEGIN_FUNCTION_REGISTRATION
