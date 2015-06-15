@@ -234,6 +234,8 @@ gl_sframe flatten_edges_1pass(const gl_sarray& sa)
 
     for (const auto& v: sa.range_iterator()) {
         flex_list elems = v.to<flex_list>();
+        if (elems.empty())
+            continue;
         for (size_t i = 0; i < elems.size() - 1; i += 2) {
             src.push_back(elems[i]);
             tgt.push_back(elems[i+1]);
@@ -254,7 +256,7 @@ std::map<std::string, size_t> get_column_mapping(const gl_sgraph& g)
 }
 
 gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
-                         const std::string& layer_key, bool with_self_edges)
+                         const std::string& layer_key, bool with_self_edges, bool verbose)
 {
     gl_sgraph h;  // to return
 
@@ -267,18 +269,38 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
     gl_sarray a(l, flex_type_enum::LIST);
     g.edges().add_column(a, "sp_edges");
 
+    if (verbose)
+        logprogress_stream  << "Added column sp_edges" << std::endl;
+
     // Find max base id
     auto max_id = g.vertices()["__id"].max();
+
+    if (verbose)
+        logprogress_stream  << "Max id: " << max_id << std::endl;
+
     // Create causal edges triple apply
+    if (verbose)
+        logprogress_stream  << "Start triple apply" << std::endl;
     g = g.triple_apply([max_id](edge_triple& triple) -> void {
             triple.edge["sp_edges"] = create_causal_edges(max_id, triple.source, triple.target);
         }, {"sp_edges"}
     );
 
-    auto edges = flatten_edges_1pass(g.edges()["sp_edges"]);
+    if (verbose) {
+        logprogress_stream  << "End triple apply" << std::endl;
+        logprogress_stream  << "Start flatten edges" << std::endl;
+    }
+
+    gl_sframe edges = flatten_edges_1pass(g.edges()["sp_edges"]);
+
+    if (verbose)
+        logprogress_stream  << "End flatten edges" << std::endl;
 
     // Add triple apply edges
     h = h.add_edges(edges, "src", "tgt");
+
+    if (verbose)
+        logprogress_stream  << "Add edges in graph H" << std::endl;
 
     if (with_self_edges) {
         gl_sarray vedges = g.vertices().apply([max_id, &col_map](const std::vector<flexible_type>& x) {
@@ -293,16 +315,25 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
         h = h.add_edges(edges, "src", "tgt");
     }
 
+    if (verbose)
+        logprogress_stream  << "Add new fields " << layer_key << std::endl;
+
     // Add new fields
     h.vertices()[layer_key] = h.vertices()["__id"].apply([max_id](const flexible_type& x) {
             return (x - 1) / max_id;  // int not float
     }, flex_type_enum::INTEGER);
+
+    if (verbose)
+        logprogress_stream  << "Done adding field: " << layer_key << std::endl;
 
     // Need new mapping for graph H
     col_map = get_column_mapping(h);
     h.vertices()[base_id_key] = h.vertices().apply([max_id, &col_map, &layer_key](const std::vector<flexible_type>& x) -> uint64_t {
             return x.at(col_map.at("__id")) - (x.at(col_map.at(layer_key)) * max_id);
     }, flex_type_enum::INTEGER);
+
+    if (verbose)
+        logprogress_stream  << "Done adding field: " << base_id_key << std::endl;
 
     return h;
 }
@@ -312,7 +343,7 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
 /* Function registration, export to python */
 BEGIN_FUNCTION_REGISTRATION
 REGISTER_FUNCTION(aggregate_layers, "data", "key_column", "value_column", "nb_layers");
-REGISTER_FUNCTION(build_sptgraph, "g", "base_id_key", "layer_key", "with_self_edges");
+REGISTER_FUNCTION(build_sptgraph, "g", "base_id_key", "layer_key", "with_self_edges", "verbose");
 REGISTER_FUNCTION(flex_bitset_to_flex_string, "f");
 END_FUNCTION_REGISTRATION
 

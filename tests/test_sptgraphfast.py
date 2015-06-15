@@ -130,8 +130,6 @@ class TestSptgraphFast(unittest.TestCase):
         self.assertEqual(7, len(h.edges))
         self.check_equal_graphs(h_ref, h)
 
-
-
     def check_equal_graphs(self, h_ref, h):
         self.assertEqual(h_ref.vertices['__id'].max(), h.vertices['__id'].max())
         self.assertEqual(h_ref.vertices['layer'].max(), h.vertices['layer'].max())  # layer starts at 0

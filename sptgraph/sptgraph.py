@@ -21,7 +21,6 @@ except ImportError:
     HAS_FAST_MODULE = False
 
 
-
 def create_node_signal(data, baseid_name, layer_name, verbose=True):
     """Create signal on the node from pandas DataFrame or Graphlab SFrame"""
 
@@ -105,7 +104,7 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
     sg = reduce_graph_to_signal(g, node_signal, baseid_name, layer_name, verbose=verbose)
     # Create graph
     if HAS_FAST_MODULE and not force_python:
-        h = fast.build_sptgraph(sg, baseid_name, layer_name, create_self_edges)
+        h = fast.build_sptgraph(sg, baseid_name, layer_name, create_self_edges, verbose)
     else:
         h = sptgraph_impl.build_sptgraph(sg, create_self_edges, baseid_name, layer_name)
 
