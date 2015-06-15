@@ -54,9 +54,9 @@ class TestSptgraphFast(unittest.TestCase):
         node_signal = sptgraph_fast.aggregate_layers(signal, 'baseID', 'layer', nb_layers)
         g = utils.networkx_to_graphlab(gen_graph(True))
         sg = sptgraph.reduce_graph_to_signal(g, node_signal, 'baseID', 'layer', verbose=False)
-        h = sptgraph_fast.build_sptgraph(sg, 'baseID', 'layer', False)
-#        print h.edges['sp_edges']
-        print h
+        h = sptgraph_fast.build_sptgraph(sg, 'baseID', 'layer', True)
+        print h.vertices
+        print h.edges
 
     def tearDown(self):
         pass

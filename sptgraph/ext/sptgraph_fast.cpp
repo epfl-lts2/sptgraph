@@ -192,27 +192,27 @@ flex_list expand_causal_edges(const Bitset& bitfield, const flexible_type& base_
     return edges;
 }
 
-// Triple apply function to create all causal edges
-struct create_causal_edges
+flex_list create_causal_edges(uint64_t max_id,
+                              flexible_type src_layers,
+                              flexible_type tgt_layers,
+                              flexible_type src_id,
+                              flexible_type tgt_id)
 {
-    create_causal_edges(uint64_t maxx_id)
-        : max_id(maxx_id)
-    {
-    }
+    auto src_data = bitset_from_flexible(src_layers);
+    auto tgt_data = bitset_from_flexible(tgt_layers);
 
-    uint64_t max_id;
+    auto active_layers = shift_add_bitsets(src_data, tgt_data);
+    auto res = expand_causal_edges(active_layers, src_id, tgt_id, max_id);
+    return res;
+}
 
-    void operator()(edge_triple& triple)
-    {
-        auto src_data = bitset_from_flexible(triple.source["layers"]);
-        auto tgt_data = bitset_from_flexible(triple.target["layers"]);
-
-        auto active_layers = shift_add_bitsets(src_data, tgt_data);
-        auto res = expand_causal_edges(active_layers, triple.source["__id"],
-                                       triple.target["__id"], max_id);
-        triple.edge["sp_edges"] = res;
-    }
-};
+flex_list create_causal_edges(uint64_t max_id,
+                              const std::map<std::string, flexible_type>& source,
+                              const std::map<std::string, flexible_type>& target)
+{
+    return create_causal_edges(max_id, source.at("layers"), target.at("layers"),
+                               source.at("__id"), target.at("__id"));
+}
 
 
 gl_sframe aggregate_layers(const gl_sframe& sf, const std::string& key_column,
@@ -239,9 +239,47 @@ flex_list flatten_edges(const flexible_type& values)
     return res;
 }
 
-gl_sframe build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
+gl_sframe flatten_edges_1pass(const gl_sarray& sa)
+{
+    flex_list src;
+    flex_list tgt;
+
+    for (const auto& v: sa.range_iterator()) {
+        flex_list elems = v.to<flex_list>();
+        for (size_t i = 0; i < elems.size() - 1; i += 2) {
+            src.push_back(elems[i]);
+            tgt.push_back(elems[i+1]);
+        }
+    }
+    return gl_sframe({{"src", src}, {"tgt", tgt}});
+}
+
+gl_sframe flatten_edges_2pass(const gl_sarray& sa)
+{
+    gl_sframe res;
+    // TODO
+    return res;
+}
+
+std::map<std::string, size_t> get_column_mapping(const gl_sgraph& g)
+{
+    // Map column names to integer ... because apply on sframe use vector instead of map
+    std::map<std::string, size_t> col_map;
+    const gl_sframe& nodes = g.get_vertices();
+    for (size_t i = 0; i < nodes.column_names().size(); ++i ) {
+        col_map[nodes.column_names()[i]] = i;
+    }
+    return col_map;
+}
+
+gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
                          const std::string& layer_key, bool with_self_edges)
 {
+    gl_sgraph h;  // to return
+
+    // Get column mapping for apply on sframe
+    auto col_map = get_column_mapping(g);
+
     // Create SArray of flex_list to store causal edges
     auto edge_count = g.num_edges();
     flex_list l(edge_count, flex_list());
@@ -250,17 +288,41 @@ gl_sframe build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
 
     // Find max base id
     auto max_id = g.vertices()["__id"].max();
-    g = g.triple_apply(create_causal_edges(max_id), {"sp_edges"});
+    // Create causal edges triple apply
+    g = g.triple_apply([max_id](edge_triple& triple) -> void {
+            triple.edge["sp_edges"] = create_causal_edges(max_id, triple.source, triple.target);
+        }, {"sp_edges"}
+    );
+    auto edges = flatten_edges_1pass(g.edges()["sp_edges"]);
 
-    // TODO iter by hand ?
-    gl_sarray packed_edges = g.edges()["sp_edges"].apply(flatten_edges, flex_type_enum::LIST);
-//    logprogress_stream << "packed_edges: " << g.edges()["sp_edges"] << std::endl;
-    gl_sframe edges = packed_edges.unpack("X", {flex_type_enum::LIST, flex_type_enum::LIST});
-//    logprogress_stream << "edges: " << edges << std::endl;
+    // Add triple apply edges
+    h = h.add_edges(edges, "src", "tgt");
 
-    // Apply to create gl_sarray(flex_list(src, tgt))
-    // unpack to create sframe with src and tgt columns
-    return edges;
+    if (with_self_edges) {
+        gl_sarray vedges = g.vertices().apply([max_id, &col_map](const std::vector<flexible_type>& x) {
+            return create_causal_edges(max_id, x.at(col_map.at("layers")),
+                                       x.at(col_map.at("layers")),
+                                       x.at(col_map.at("__id")),
+                                       x.at(col_map.at("__id")));
+        }, flex_type_enum::LIST);
+
+        edges = flatten_edges_1pass(vedges);
+        // Add self edges
+        h = h.add_edges(edges, "src", "tgt");
+    }
+
+    // Add new fields
+    h.vertices()[layer_key] = h.vertices()["__id"].apply([max_id](const flexible_type& x) {
+            return (x - 1) / max_id;  // int not float
+    }, flex_type_enum::INTEGER);
+
+    // Need new mapping for graph H
+    col_map = get_column_mapping(h);
+    h.vertices()[base_id_key] = h.vertices().apply([max_id, &col_map, &layer_key](const std::vector<flexible_type>& x) -> uint64_t {
+            return x.at(col_map.at("__id")) - (x.at(col_map.at(layer_key)) * max_id);
+    }, flex_type_enum::INTEGER);
+
+    return h;
 }
 
 /* OPTIONS */
