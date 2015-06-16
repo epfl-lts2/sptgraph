@@ -176,8 +176,13 @@ flex_list expand_causal_edges(const Bitset& bitfield, const flexible_type& base_
     while (count) {
         uint64_t src = base_src.to<uint64_t>() + (cur_layer * max_id);
         uint64_t tgt = base_tgt.to<uint64_t>() + ((cur_layer + 1) * max_id);
-        edges.push_back(src);
-        edges.push_back(tgt);
+        // TMP
+        flex_list pair(2);
+        pair[0] = src;
+        pair[1] = tgt;
+        edges.push_back(pair);
+//        edges.push_back(src);
+//        edges.push_back(tgt);
         cur_layer = bitfield.find_next(cur_layer);
         count--;
     }
@@ -255,6 +260,14 @@ std::map<std::string, size_t> get_column_mapping(const gl_sgraph& g)
     return col_map;
 }
 
+gl_sframe flatten_edges_2pass(const gl_sframe& sf)
+{
+    gl_sframe res = sf.stack("sp_edges", "sp_edge");
+    res = res.unpack("sp_edge", "X", {flex_type_enum::INTEGER, flex_type_enum::INTEGER});
+    res.rename({{"X.0", "src"}, {"X.1", "tgt"}});
+    return res[{"src", "tgt"}].dropna();
+}
+
 gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
                          const std::string& layer_key, bool with_self_edges, bool verbose)
 {
@@ -291,7 +304,8 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
         logprogress_stream  << "Start flatten edges" << std::endl;
     }
 
-    gl_sframe edges = flatten_edges_1pass(g.edges()["sp_edges"]);
+    gl_sframe edges = flatten_edges_2pass(g.edges());
+//    gl_sframe edges = flatten_edges_1pass(g.edges()["sp_edges"]);
 
     if (verbose)
         logprogress_stream  << "End flatten edges" << std::endl;
@@ -303,6 +317,9 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
         logprogress_stream  << "Add edges in graph H" << std::endl;
 
     if (with_self_edges) {
+        if (verbose)
+            logprogress_stream  << "Creating self edges" << std::endl;
+
         gl_sarray vedges = g.vertices().apply([max_id, &col_map](const std::vector<flexible_type>& x) {
             return create_causal_edges(max_id, x.at(col_map.at("layers")),
                                        x.at(col_map.at("layers")),
@@ -310,9 +327,24 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
                                        x.at(col_map.at("__id")));
         }, flex_type_enum::LIST);
 
-        edges = flatten_edges_1pass(vedges);
+        gl_sframe tmp({{"sp_edges", vedges}});
+//        edges = flatten_edges_1pass(vedges);
+
+        if (verbose)
+            logprogress_stream  << "Flatten self-edges" << std::endl;
+
+        edges = flatten_edges_2pass(tmp);
+
+        if (verbose) {
+            logprogress_stream  << "End flatten self-edges" << std::endl;
+            logprogress_stream  << "Add self-edges in H" << std::endl;
+        }
+
         // Add self edges
         h = h.add_edges(edges, "src", "tgt");
+
+        if (verbose)
+            logprogress_stream  << "Self-edges added in H" << std::endl;
     }
 
     if (verbose)
