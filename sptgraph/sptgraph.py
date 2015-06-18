@@ -66,7 +66,7 @@ def create_node_signal_fast(data, baseid_name, layer_name, verbose=True):
     return res
 
 
-def reduce_graph_to_signal(g, node_signal, baseid_name, layer_name, verbose=True):
+def merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=None, use_fast=True, verbose=True):
     start = time.time()
     if verbose:
         LOGGER.info('Start reducing graph to minimum')
@@ -80,10 +80,16 @@ def reduce_graph_to_signal(g, node_signal, baseid_name, layer_name, verbose=True
         if verbose:
             LOGGER.info('Conversion done in: %s', time.time() - start2)
 
-    # Filter nodes and join from original graph and signal
-    good_nodes = p.vertices.join(node_signal, on={'__id': baseid_name}, how='inner')
-    # Filter edges
-    good_edges = p.get_edges(src_ids=good_nodes['__id']).join(p.get_edges(dst_ids=good_nodes['__id']))
+    if use_fast:
+        good_nodes = node_signal
+        good_nodes.rename({baseid_name: '__id'})
+    else:
+        good_nodes = p.vertices.join(node_signal, on={'__id': baseid_name}, how='inner')
+
+    if excluded_ids:
+        good_nodes = good_nodes.filter_by(excluded_ids, '__id', exclude=True)
+
+    good_edges = p.get_edges(dst_ids=good_nodes['__id']).filter_by(good_nodes['__id'], '__src_id')
 
     if verbose:
         LOGGER.info('Graph reduction done in: %s seconds', time.time() - start)
@@ -92,7 +98,8 @@ def reduce_graph_to_signal(g, node_signal, baseid_name, layer_name, verbose=True
 
 
 def create_spatio_temporal_graph(g, data, create_self_edges=True,
-                                 baseid_name='baseID', layer_name='layer', verbose=True, force_python=False):
+                                 baseid_name='baseID', layer_name='layer', verbose=True,
+                                 force_python=False, excluded_ids=None):
     start = time.time()
     if verbose:
         LOGGER.info('Start spatio-temporal graph creation')
@@ -101,10 +108,10 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
         node_signal = create_node_signal_fast(data, baseid_name, layer_name, verbose=verbose)
     else:
         node_signal = create_node_signal(data, baseid_name, layer_name, verbose=verbose)
-    sg = reduce_graph_to_signal(g, node_signal, baseid_name, layer_name, verbose=verbose)
+    sg = merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=excluded_ids, verbose=verbose)
     # Create graph
     if HAS_FAST_MODULE and not force_python:
-        h = fast.build_sptgraph(sg, baseid_name, layer_name, create_self_edges, verbose)
+        h = fast.build_sptgraph(sg, baseid_name, layer_name, create_self_edges, False)
     else:
         h = sptgraph_impl.build_sptgraph(sg, create_self_edges, baseid_name, layer_name)
 

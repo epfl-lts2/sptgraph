@@ -25,6 +25,7 @@ class TestSptgraph(unittest.TestCase):
     # @unittest.skip('Skipping create_node_signal')
     def test_create_node_signal(self):
         node_signal = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer', False)
+        node_signal = node_signal.sort('baseID')
         self.assertEqual('15', node_signal['layers'][0])
         self.assertEqual('6', node_signal['layers'][1])
         self.assertEqual('6', node_signal['layers'][2])
@@ -46,7 +47,7 @@ class TestSptgraph(unittest.TestCase):
 
         for is_directed in [True, False]:
             g = utils.networkx_to_graphlab(gen_graph(is_directed))
-            sg = sptgraph.reduce_graph_to_signal(g, node_signal, 'baseID', 'layer', verbose=False)
+            sg = sptgraph.merge_signal_on_graph(g, node_signal, 'baseID', 'layer', use_fast=False, verbose=False)
 
             # Node 5 is never activated
             self.assertEqual(4, len(sg.vertices))

@@ -22,15 +22,16 @@ class TestSptgraphFast(unittest.TestCase):
     def setUp(self):
         pass
 
-    @unittest.skip('Skipping create_node_signal')
+    # @unittest.skip('Skipping create_node_signal')
     def test_create_node_signal(self):
         node_signal = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer', False)
+        node_signal = node_signal.sort('baseID')
         self.assertEqual('15', node_signal['layers'][0])
         self.assertEqual('6', node_signal['layers'][1])
         self.assertEqual('6', node_signal['layers'][2])
         self.assertEqual('6', node_signal['layers'][3])
 
-    @unittest.skip('Skipping networkx_to_graphlab')
+    # @unittest.skip('Skipping networkx_to_graphlab')
     def test_networkx_to_graphlab(self):
         g = utils.networkx_to_graphlab(gen_graph(False))
         self.assertEqual(5, len(g.vertices))
@@ -40,13 +41,13 @@ class TestSptgraphFast(unittest.TestCase):
         self.assertEqual(5, len(g.vertices))
         self.assertEqual(5, len(g.edges))
 
-    @unittest.skip('Skipping create_signal_graph')
+    # @unittest.skip('Skipping create_signal_graph')
     def test_create_signal_graph(self):
         node_signal = sptgraph.create_node_signal(gen_signal(), 'baseID', 'layer', False)
 
         for is_directed in [True, False]:
             g = utils.networkx_to_graphlab(gen_graph(is_directed))
-            sg = sptgraph.reduce_graph_to_signal(g, node_signal, 'baseID', 'layer', verbose=False)
+            sg = sptgraph.merge_signal_on_graph(g, node_signal, 'baseID', 'layer', use_fast=False, verbose=False)
 
             # Node 5 is never activated
             self.assertEqual(4, len(sg.vertices))
@@ -60,7 +61,7 @@ class TestSptgraphFast(unittest.TestCase):
             expected_columns = {'layers', 'node_weight', '__id'}
             self.assertItemsEqual(expected_columns, actual_columns)
 
-    @unittest.skip('Skipping aggregate layers')
+    # @unittest.skip('Skipping aggregate layers')
     def test_aggregate_layers(self):
         signal = gl.SFrame(gen_signal())
         nb_layers = signal['layer'].max() + 1  # starts at 0
@@ -76,7 +77,7 @@ class TestSptgraphFast(unittest.TestCase):
         m = l1 == l2
         self.assertTrue(m.all(), 'Layers should be equal')
 
-    @unittest.skip('Skipping rebuilt_bitset')
+    # @unittest.skip('Skipping rebuilt_bitset')
     def test_rebuild_bitset(self):
         signal = gl.SFrame(gen_signal())
         nb_layers = signal['layer'].max() + 1  # starts at 0
@@ -103,7 +104,7 @@ class TestSptgraphFast(unittest.TestCase):
         self.assertEqual(20, len(h.edges))
         self.check_equal_graphs(h_ref, h)
 
-    @unittest.skip('Skipping test_sptgraph_directed_self_edges')
+    # @unittest.skip('Skipping test_sptgraph_directed_self_edges')
     def test_sptgraph_directed_self_edges(self):
         h_ref = sptgraph.create_spatio_temporal_graph(gen_graph(True), gen_signal(), True, verbose=False, force_python=True)
         h = sptgraph.create_spatio_temporal_graph(gen_graph(True), gen_signal(), True, verbose=False)
@@ -113,7 +114,7 @@ class TestSptgraphFast(unittest.TestCase):
         self.assertEqual(13, len(h.edges))
         self.check_equal_graphs(h_ref, h)
 
-    @unittest.skip('Skipping test_sptgraph_undirected_no_self_edges')
+    # @unittest.skip('Skipping test_sptgraph_undirected_no_self_edges')
     def test_sptgraph_undirected_no_self_edges(self):
         h_ref = sptgraph.create_spatio_temporal_graph(gen_graph(False), gen_signal(), False, verbose=False, force_python=True)
         h = sptgraph.create_spatio_temporal_graph(gen_graph(False), gen_signal(), False, verbose=False)
@@ -123,7 +124,7 @@ class TestSptgraphFast(unittest.TestCase):
         self.assertEqual(14, len(h.edges))
         self.check_equal_graphs(h_ref, h)
 
-    @unittest.skip('Skipping test_sptgraph_directed_no_self_edges')
+    # @unittest.skip('Skipping test_sptgraph_directed_no_self_edges')
     def test_sptgraph_directed_no_self_edges(self):
         h_ref = sptgraph.create_spatio_temporal_graph(gen_graph(True), gen_signal(), False, verbose=False, force_python=True)
         h = sptgraph.create_spatio_temporal_graph(gen_graph(True), gen_signal(), False, verbose=False)
