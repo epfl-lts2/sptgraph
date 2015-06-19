@@ -263,6 +263,8 @@ std::map<std::string, size_t> get_column_mapping(const gl_sgraph& g)
 gl_sframe flatten_edges_2pass(const gl_sframe& sf)
 {
     gl_sframe res = sf.stack("sp_edges", "sp_edge");
+    res["sp_edge"] = res["sp_edge"].astype(flex_type_enum::LIST);
+
     res = res.unpack("sp_edge", "X", {flex_type_enum::INTEGER, flex_type_enum::INTEGER});
     res.rename({{"X.0", "src"}, {"X.1", "tgt"}});
     return res[{"src", "tgt"}].dropna();
@@ -305,7 +307,6 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
     }
 
     gl_sframe edges = flatten_edges_2pass(g.edges());
-//    gl_sframe edges = flatten_edges_1pass(g.edges()["sp_edges"]);
 
     if (verbose)
         logprogress_stream  << "End flatten edges" << std::endl;
@@ -328,7 +329,6 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
         }, flex_type_enum::LIST);
 
         gl_sframe tmp({{"sp_edges", vedges}});
-//        edges = flatten_edges_1pass(vedges);
 
         if (verbose)
             logprogress_stream  << "Flatten self-edges" << std::endl;

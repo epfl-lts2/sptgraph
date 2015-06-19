@@ -44,20 +44,23 @@ def extract_components(g, comp_sframe, min_node_count=2):
     return comps
 
 
-def component_to_networkx(comp, h, layer_to_ts=None):
+def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', layer_to_ts=None):
     g = nx.DiGraph()
     g.name = 'Component ' + str(comp['component_id'])
+
+    layers = layer_name + 's'
+    baseids = baseid_name + 's'
 
     if layer_to_ts is not None:
         for i in xrange(comp['node_count']):
             g.add_node(comp['nodes'][i],
-                      {'base_id': comp['base_ids'][i], 'layer': comp['layers'][i],
-                       'timestamp': layer_to_ts[comp['layers'][i]].strftime("%Y-%m-%d %H:%M:%S"),
-                       'label': comp['base_ids'][i]
+                      {baseid_name: comp[baseids][i], layer_name: comp[layers][i],
+                       'timestamp': layer_to_ts[comp[layers][i]].strftime("%Y-%m-%d %H:%M:%S"),
+                       'label': comp[baseids][i]
                       })
     else:
         for i in xrange(comp['node_count']):
-            g.add_node(comp['nodes'][i], {'base_id': comp['base_ids'][i], 'layer': comp['layers'][i]})
+            g.add_node(comp['nodes'][i], {baseid_name: comp[baseids][i], layer_name: comp[layers][i]})
 
     edges = h.edges[h.edges['component_id'] == comp['component_id']][['__src_id', '__dst_id']]
 
