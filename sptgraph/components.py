@@ -68,3 +68,30 @@ def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', lay
         g.add_edge(k['__src_id'], k['__dst_id'])
     return g
 
+
+def get_weighted_static_graph(dyn_g, baseid_name='baseID'):
+    g = nx.DiGraph()  # directed + self-edges
+    # Add unique nodes
+    g.add_nodes_from(set(nx.get_node_attributes(dyn_g, baseid_name).values()))
+
+    for (u, v) in dyn_g.edges_iter():
+        src = dyn_g.node[u][baseid_name]
+        tgt = dyn_g.node[v][baseid_name]
+
+        if g.has_edge(src, tgt):
+            g[src][tgt]['count'] += 1
+            g.node[src]['out_weight'] += 1
+        else:
+            g.add_edge(src, tgt, count=1)
+            deg = g.node[src].get('out_weight', None)
+            if deg:
+                g.node[src]['out_weight'] += 1
+            else:
+                g.node[src]['out_weight'] = 1
+
+    # Normalize counts
+    for (u, v, d) in g.edges_iter(data=True):
+        d['weight'] = d['count'] / float(g.node[u]['out_weight'])
+        d['score'] = d['weight']
+
+    return g
