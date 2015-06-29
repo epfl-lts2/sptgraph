@@ -3,6 +3,7 @@
 import graphlab as gl
 import numpy as np
 import networkx as nx
+import community  # pip install python-Louvain
 
 
 def find_connected_components(g):
@@ -69,7 +70,15 @@ def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', lay
     return g
 
 
-def get_weighted_static_graph(dyn_g, baseid_name='baseID'):
+def get_weighted_static_component(dyn_g, baseid_name='baseID'):
+    """Flatten dynamic component to a spatial static graph with some properties on the graph."""
+    def inc_prop(g, nid, key):
+        deg = g.node[nid].get(key, None)
+        if deg:
+            g.node[nid][key] += 1
+        else:
+            g.node[nid][key] = 1
+
     g = nx.DiGraph()  # directed + self-edges
     # Add unique nodes
     g.add_nodes_from(set(nx.get_node_attributes(dyn_g, baseid_name).values()))
@@ -80,18 +89,34 @@ def get_weighted_static_graph(dyn_g, baseid_name='baseID'):
 
         if g.has_edge(src, tgt):
             g[src][tgt]['count'] += 1
-            g.node[src]['out_weight'] += 1
         else:
             g.add_edge(src, tgt, count=1)
-            deg = g.node[src].get('out_weight', None)
-            if deg:
-                g.node[src]['out_weight'] += 1
-            else:
-                g.node[src]['out_weight'] = 1
+
+        inc_prop(g, src, 'out_degree')
+        inc_prop(g, tgt, 'in_degree')
 
     # Normalize counts
     for (u, v, d) in g.edges_iter(data=True):
-        d['weight'] = d['count'] / float(g.node[u]['out_weight'])
-        d['score'] = d['weight']
+        d['out_score'] = d['count'] / float(g.node[u]['out_degree'])
+        d['in_score'] = d['count'] / float(g.node[v]['in_degree'])
+        d['weight'] = (d['out_score'] + d['in_score']) / 2
+        d['score'] = d['weight']  # mostly for tulip which cannot display the weight prop ...
 
     return g
+
+
+def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='score', baseid_name='baseID'):
+    """Partition using Louvain modularity and optionally remove low
+    probability edges from a dynamic activated component and static_component.
+    """
+    if static_g is None:
+        static_g = get_weighted_static_component(dyn_g, baseid_name)
+
+    if threshold > 0.0:
+        edges = nx.get_edge_attributes(static_g, thres_key)
+        to_remove = [k for k, v in edges.iteritems() if v <= threshold]
+        static_g.remove_edges_from(to_remove)
+
+    # TODO
+    # remove edges from dyn comp, partition (both?) graphs
+    return dyn_g

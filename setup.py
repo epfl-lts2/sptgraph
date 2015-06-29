@@ -16,7 +16,8 @@ requirements = [
     "bitsets",
     "networkx",
     "pandas",
-    "wheel"
+    "wheel",
+    "python-louvain"
 ]
 
 test_requirements = ["GraphLab-Create"

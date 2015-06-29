@@ -3,3 +3,4 @@ GraphLab-Create>=1.3
 networkx>=1.9.2
 wheel>=0.23.0
 pandas>=0.15.2
+python-louvain>=0.3
