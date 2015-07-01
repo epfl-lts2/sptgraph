@@ -66,7 +66,8 @@ def create_node_signal_fast(data, baseid_name, layer_name, verbose=True):
     return res
 
 
-def merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=None, use_fast=True, verbose=True):
+def merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=None, use_fast=True,
+                          verbose=True, remove_self=True):
     start = time.time()
     if verbose:
         LOGGER.info('Start reducing graph to minimum')
@@ -90,6 +91,10 @@ def merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=
         good_nodes = good_nodes.filter_by(excluded_ids, '__id', exclude=True)
 
     good_edges = p.get_edges(dst_ids=good_nodes['__id']).filter_by(good_nodes['__id'], '__src_id')
+
+    # Remove self-edges
+    if remove_self:
+        good_edges = good_edges[(good_edges['__src_id'] - good_edges['__dst_id']) != 0]
 
     if verbose:
         LOGGER.info('Graph reduction done in: %s seconds', time.time() - start)

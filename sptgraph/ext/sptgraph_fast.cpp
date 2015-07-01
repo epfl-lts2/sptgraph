@@ -264,7 +264,7 @@ gl_sframe flatten_edges_2pass(const gl_sframe& sf)
 
     res = res.unpack("sp_edge", "X", {flex_type_enum::INTEGER, flex_type_enum::INTEGER});
     res.rename({{"X.0", "src"}, {"X.1", "tgt"}});
-    return res[{"src", "tgt"}].dropna().unique();
+    return res[{"src", "tgt"}].dropna();
 }
 
 gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
