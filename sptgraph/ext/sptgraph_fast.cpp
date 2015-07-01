@@ -176,13 +176,10 @@ flex_list expand_causal_edges(const Bitset& bitfield, const flexible_type& base_
     while (count) {
         uint64_t src = base_src.to<uint64_t>() + (cur_layer * max_id);
         uint64_t tgt = base_tgt.to<uint64_t>() + ((cur_layer + 1) * max_id);
-        // TMP
         flex_list pair(2);
         pair[0] = src;
         pair[1] = tgt;
         edges.push_back(pair);
-//        edges.push_back(src);
-//        edges.push_back(tgt);
         cur_layer = bitfield.find_next(cur_layer);
         count--;
     }
@@ -267,7 +264,7 @@ gl_sframe flatten_edges_2pass(const gl_sframe& sf)
 
     res = res.unpack("sp_edge", "X", {flex_type_enum::INTEGER, flex_type_enum::INTEGER});
     res.rename({{"X.0", "src"}, {"X.1", "tgt"}});
-    return res[{"src", "tgt"}].dropna();
+    return res[{"src", "tgt"}].dropna().unique();
 }
 
 gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
@@ -296,7 +293,7 @@ gl_sgraph build_sptgraph(gl_sgraph& g, const std::string& base_id_key,
     // Create causal edges triple apply
     if (verbose)
         logprogress_stream  << "Start triple apply" << std::endl;
-    g = g.triple_apply([max_id](edge_triple& triple) -> void {
+        g = g.triple_apply([max_id](edge_triple& triple) -> void {
             triple.edge["sp_edges"] = create_causal_edges(max_id, triple.source, triple.target);
         }, {"sp_edges"}
     );

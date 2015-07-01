@@ -41,3 +41,11 @@ def reform_layer_int_from_blocks(blocks):
         res += bin(ctypes.c_ulong(b).value)[2:]
     res = '0b' + res
     return int(res, 2)
+
+
+def to_multi_dict(items):
+    def insert(d, kv):
+        k, v = kv
+        d.setdefault(k, []).append(v)
+        return d
+    return reduce(insert, [{}] + items)

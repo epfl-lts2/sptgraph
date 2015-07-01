@@ -3,8 +3,19 @@
 import graphlab as gl
 import numpy as np
 import networkx as nx
-import community  # pip install python-Louvain
+import logging
 
+import utils
+
+LOGGER = logging.getLogger(__name__)
+HAS_GRAPHTOOL = False
+
+try:
+    import graph_tool.all as gt
+    HAS_GRAPHTOOL = True
+except ImportError:
+    LOGGER.warning('graph-tool package not found, some functions will be disabled')
+    HAS_GRAPHTOOL = False
 
 def find_connected_components(g):
     cc = gl.graph_analytics.connected_components.create(g, False)
@@ -64,11 +75,53 @@ def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', lay
             g.add_node(comp['nodes'][i], {baseid_name: comp[baseids][i], layer_name: comp[layers][i]})
 
     edges = h.edges[h.edges['component_id'] == comp['component_id']][['__src_id', '__dst_id']]
-
     for k in edges:
         g.add_edge(k['__src_id'], k['__dst_id'])
+
     return g
 
+
+def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', layer_to_ts=None):
+    if not HAS_GRAPHTOOL:
+        LOGGER.error('graph-tool not installed, cannot use function')
+        raise ImportError('graph-tool not installed, cannot use function')
+
+    layers = layer_name + 's'
+    baseids = baseid_name + 's'
+
+    # Create graph
+    g = gt.Graph(directed=True)
+    g.gp.name = g.new_graph_property('string')
+    g.gp.name = 'Component ' + str(comp['component_id'])
+
+    # Vertex properties
+    g.vertex_properties[baseid_name] = g.new_vertex_property("int64_t")
+    g.vertex_properties[layer_name] = g.new_vertex_property("int32_t")
+    g.vp.nid = g.new_vertex_property("int64_t")
+    if layer_to_ts is not None:
+        g.vp.timestamp = g.new_vertex_property("string")
+
+    # Add nodes
+    vertex_map = dict()  # idx mapping
+    vlist = g.add_vertex(comp['node_count'])
+    for i, v in enumerate(vlist):
+        g.vertex_properties[baseid_name][v] = comp[baseids][i]
+        g.vertex_properties[layer_name][v] = comp[layers][i]
+        g.vp.nid[v] = comp['nodes'][i]
+
+        vertex_map[comp['nodes'][i]] = v
+
+        if layer_to_ts is not None:
+            g.vp.timestamp[v] = layer_to_ts[comp[layers][i]].strftime("%Y-%m-%d %H:%M:%S")
+
+    # Add edges
+    edges = h.edges[h.edges['component_id'] == comp['component_id']][['__src_id', '__dst_id']]
+    for k in edges:
+        src = vertex_map[k['__src_id']]
+        tgt = vertex_map[k['__dst_id']]
+        g.add_edge(src, tgt, False)
+
+    return g
 
 def get_weighted_static_component(dyn_g, baseid_name='baseID'):
     """Flatten dynamic component to a spatial static graph with some properties on the graph."""
@@ -114,9 +167,21 @@ def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='
 
     if threshold > 0.0:
         edges = nx.get_edge_attributes(static_g, thres_key)
-        to_remove = [k for k, v in edges.iteritems() if v <= threshold]
-        static_g.remove_edges_from(to_remove)
+        to_remove_static = [k for k, v in edges.iteritems() if v <= threshold]
+        static_g.remove_edges_from(to_remove_static)
 
-    # TODO
-    # remove edges from dyn comp, partition (both?) graphs
+        md = utils.to_multi_dict(to_remove_static)
+        to_remove_dyn = []
+        for u, v in dyn_g.edges_iter():
+            src = dyn_g.node[u][baseid_name]
+            tgt = dyn_g.node[v][baseid_name]
+            if src in md:
+                if tgt in md[src]:
+                    to_remove_dyn.append((u, v))
+
+        dyn_g.remove_edges_from(to_remove_dyn)
+
+    parts = community.best_partition(dyn_g)
+    print parts
+
     return dyn_g
