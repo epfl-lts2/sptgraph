@@ -2,13 +2,14 @@
 
 import graphlab as gl
 import numpy as np
-import networkx as nx
 import logging
+from collections import defaultdict
 
 import utils
 
 LOGGER = logging.getLogger(__name__)
 HAS_GRAPHTOOL = False
+HAS_NETWORKX = False
 
 try:
     import graph_tool.all as gt
@@ -16,6 +17,14 @@ try:
 except ImportError:
     LOGGER.warning('graph-tool package not found, some functions will be disabled')
     HAS_GRAPHTOOL = False
+
+try:
+    import networkx as nx
+    HAS_NETWORKX = True
+except ImportError:
+    LOGGER.warning('Networkx package not found, some functions will be disabled')
+    HAS_NETWORKX = False
+
 
 def find_connected_components(g):
     cc = gl.graph_analytics.connected_components.create(g, False)
@@ -57,6 +66,10 @@ def extract_components(g, comp_sframe, min_node_count=2):
 
 
 def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', layer_to_ts=None):
+    if not HAS_NETWORKX:
+        LOGGER.error('Networkx not installed, cannot use function')
+        raise ImportError('Networkx not installed, cannot use function')
+
     g = nx.DiGraph()
     g.name = 'Component ' + str(comp['component_id'])
 
@@ -125,6 +138,74 @@ def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', la
 
 def get_weighted_static_component(dyn_g, baseid_name='baseID'):
     """Flatten dynamic component to a spatial static graph with some properties on the graph."""
+    if HAS_NETWORKX and isinstance(dyn_g, nx.DiGraph):
+        return _get_weighted_static_component_nx(dyn_g, baseid_name)
+
+    if HAS_GRAPHTOOL and isinstance(dyn_g, gt.Graph):
+        return _get_weighted_static_component_gt(dyn_g, baseid_name)
+
+    LOGGER.error('Dynamic graph format not supported')
+    return None
+
+
+def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
+    if not HAS_GRAPHTOOL:
+        LOGGER.error('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
+        raise ImportError('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
+
+    unique_baseids = np.unique(dyn_g.vertex_properties[baseid_name].get_array())
+
+    g = gt.Graph(directed=True)
+    vlist = g.add_vertex(len(unique_baseids))
+    baseid_map = dict(zip(unique_baseids, vlist))
+
+    g.vp.in_deg = g.new_vertex_property('int', 0)
+    g.vp.out_deg = g.new_vertex_property('int', 0)
+    g.vertex_properties[baseid_name] = g.new_vertex_property('int64_t')
+
+    g.ep.count = g.new_edge_property('int', 1)
+    g.ep.out_score = g.new_edge_property('double', 0)
+    g.ep.in_score = g.new_edge_property('double', 0)
+    g.ep.score = g.new_edge_property('double', 0)
+
+    for arc in dyn_g.edges():
+        # static g
+        u = dyn_g.vertex_properties[baseid_name][arc.source()]
+        v = dyn_g.vertex_properties[baseid_name][arc.target()]
+
+        src = baseid_map[u]
+        tgt = baseid_map[v]
+
+        # Add baseid prop
+        g.vertex_properties[baseid_name][src] = u
+        g.vertex_properties[baseid_name][tgt] = v
+
+        e = g.edge(src, tgt)
+        if e:
+            g.ep.count[e] += 1
+        else:
+            g.add_edge(src, tgt)
+
+        # inc source and target degree
+        g.vp.out_deg[src] += 1
+        g.vp.in_deg[tgt] += 1
+
+    # Normalize weights
+    for e in g.edges():
+        out_score = g.ep.count[e] / float(g.vp.out_deg[e.source()])
+        in_score = g.ep.count[e] / float(g.vp.in_deg[e.target()])
+        g.ep.out_score[e] = out_score
+        g.ep.in_score[e] = in_score
+        g.ep.score[e] = (out_score + in_score) / 2
+
+    return g
+
+
+def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
+    if not HAS_NETWORKX:
+        LOGGER.error('Networkx not installed, cannot use function _get_weighted_static_component_nx')
+        raise ImportError('Networkx not installed, cannot use function _get_weighted_static_component_nx')
+
     def inc_prop(g, nid, key):
         deg = g.node[nid].get(key, None)
         if deg:
@@ -158,30 +239,44 @@ def get_weighted_static_component(dyn_g, baseid_name='baseID'):
     return g
 
 
-def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='score', baseid_name='baseID'):
-    """Partition using Louvain modularity and optionally remove low
-    probability edges from a dynamic activated component and static_component.
+def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='score', baseid_name='baseID',
+                                weighted=True):
+    """Find the block partition of an unspecified size which minimizes the description length of the
+    network, according to the stochastic blockmodel ensemble which best describes it. optionally
+    remove low probability edges from a dynamic activated component and static_component.
     """
+    if not HAS_GRAPHTOOL:
+        LOGGER.error('Graph-tool not installed, cannot use function partition_dynamic_component')
+        raise ImportError('Graph-tool not installed, cannot use function partition_dynamic_component')
+
+    import graph_tool.community as gtc
+
     if static_g is None:
         static_g = get_weighted_static_component(dyn_g, baseid_name)
 
     if threshold > 0.0:
-        edges = nx.get_edge_attributes(static_g, thres_key)
-        to_remove_static = [k for k, v in edges.iteritems() if v <= threshold]
-        static_g.remove_edges_from(to_remove_static)
+        filt_static = gt.GraphView(static_g, efilt=lambda e: static_g.edge_properties[thres_key][e] <= threshold)
 
-        md = utils.to_multi_dict(to_remove_static)
-        to_remove_dyn = []
-        for u, v in dyn_g.edges_iter():
-            src = dyn_g.node[u][baseid_name]
-            tgt = dyn_g.node[v][baseid_name]
-            if src in md:
-                if tgt in md[src]:
-                    to_remove_dyn.append((u, v))
+        to_remove_static = defaultdict(list)
+        for e in filt_static.edges():
+            u = filt_static.vertex_properties[baseid_name][e.source()]
+            v = filt_static.vertex_properties[baseid_name][e.target()]
+            to_remove_static[u].append(v)
 
-        dyn_g.remove_edges_from(to_remove_dyn)
+        to_remove_dyn = dyn_g.new_edge_property('bool', False)
+        for e in dyn_g.edges():
+            u = dyn_g.vertex_properties[baseid_name][e.source()]
+            v = dyn_g.vertex_properties[baseid_name][e.target()]
+            if u in to_remove_static:
+                if v in to_remove_static[u]:
+                    to_remove_dyn[e] = True
 
-    parts = community.best_partition(dyn_g)
-    print parts
+        # keep all edges set to False (no deletion)
+        dyn_g.set_edge_filter(to_remove_dyn, inverted=True)
+        # shrink graph
+        dyn_g.purge_edges()
 
+    state = gtc.minimize_blockmodel_dl(dyn_g)
+    dyn_g.vp.cluster_id = state.b
     return dyn_g
+
