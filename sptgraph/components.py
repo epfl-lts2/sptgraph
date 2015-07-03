@@ -4,6 +4,7 @@ import graphlab as gl
 import numpy as np
 import logging
 from collections import defaultdict
+import itertools
 
 import utils
 
@@ -13,6 +14,7 @@ HAS_NETWORKX = False
 
 try:
     import graph_tool.all as gt
+    import graph_tool.community as gtc
     HAS_GRAPHTOOL = True
 except ImportError:
     LOGGER.warning('graph-tool package not found, some functions will be disabled')
@@ -240,7 +242,7 @@ def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
 
 
 def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='score', baseid_name='baseID',
-                                weighted=True):
+                                weighted=True, method='block', purge_singletons=True):
     """Find the block partition of an unspecified size which minimizes the description length of the
     network, according to the stochastic blockmodel ensemble which best describes it. optionally
     remove low probability edges from a dynamic activated component and static_component.
@@ -249,34 +251,59 @@ def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='
         LOGGER.error('Graph-tool not installed, cannot use function partition_dynamic_component')
         raise ImportError('Graph-tool not installed, cannot use function partition_dynamic_component')
 
-    import graph_tool.community as gtc
+    def _purge_singletons(g):
+        g_deg = g.new_vertex_property('bool', False)
+        deg = g.degree_property_map('total')
+        g_deg.a[:] = deg.a > 0
+        g.set_vertex_filter(g_deg)
 
     if static_g is None:
         static_g = get_weighted_static_component(dyn_g, baseid_name)
 
     if threshold > 0.0:
-        filt_static = gt.GraphView(static_g, efilt=lambda e: static_g.edge_properties[thres_key][e] <= threshold)
+        filt_static = gt.GraphView(static_g, efilt=lambda e: static_g.edge_properties[thres_key][e] > threshold)
 
-        to_remove_static = defaultdict(list)
+        to_keep_static = defaultdict(list)
         for e in filt_static.edges():
             u = filt_static.vertex_properties[baseid_name][e.source()]
             v = filt_static.vertex_properties[baseid_name][e.target()]
-            to_remove_static[u].append(v)
+            to_keep_static[u].append(v)
 
-        to_remove_dyn = dyn_g.new_edge_property('bool', False)
+        to_keep_dyn = dyn_g.new_edge_property('bool', False)
         for e in dyn_g.edges():
             u = dyn_g.vertex_properties[baseid_name][e.source()]
             v = dyn_g.vertex_properties[baseid_name][e.target()]
-            if u in to_remove_static:
-                if v in to_remove_static[u]:
-                    to_remove_dyn[e] = True
+            if u in to_keep_static:
+                if v in to_keep_static[u]:
+                    to_keep_dyn[e] = True
 
         # keep all edges set to False (no deletion)
-        dyn_g.set_edge_filter(to_remove_dyn, inverted=True)
-        # shrink graph
-        dyn_g.purge_edges()
+        dyn_g.set_edge_filter(to_keep_dyn)
+        static_g = filt_static
+        
+    if purge_singletons:
+        _purge_singletons(static_g)
+        _purge_singletons(dyn_g)
 
-    state = gtc.minimize_blockmodel_dl(dyn_g)
-    dyn_g.vp.cluster_id = state.b
-    return dyn_g
+    # Cluster static graph
+    clusters = None
+    if method == 'block':
+        clusters = gtc.minimize_blockmodel_dl(static_g).b
+    else:
+        clusters = gtc.community_structure(static_g, 1000, 10, t_range=(5, 0.1),
+                                           weight=static_g.edge_properties[thres_key] if weighted else None)
+
+    # Add communities
+    static_g.vp.cluster_id = clusters
+
+    # Backport communities to dynamic component
+    id2cluster = dict(itertools.izip(static_g.vertex_properties[baseid_name].a, clusters.a))
+    dyn_g.vp.cluster_id = dyn_g.new_vertex_property('int')
+
+    for n in dyn_g.vertices():
+        cluster_id = id2cluster[dyn_g.vertex_properties[baseid_name][n]]
+        dyn_g.vp.cluster_id[n] = cluster_id
+
+    return dyn_g, static_g
+
 
