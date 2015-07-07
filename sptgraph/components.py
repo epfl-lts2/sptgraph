@@ -15,6 +15,9 @@ HAS_NETWORKX = False
 try:
     import graph_tool.all as gt
     import graph_tool.community as gtc
+    import graph_tool.stats as gts
+    import graph_tool.util as gtu
+    import graph_tool.topology as gtt
     HAS_GRAPHTOOL = True
 except ImportError:
     LOGGER.warning('graph-tool package not found, some functions will be disabled')
@@ -241,8 +244,59 @@ def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
     return g
 
 
-def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='score', baseid_name='baseID',
-                                weighted=True, method='block', purge_singletons=True):
+def filter_singletons_inplace(g):
+    deg_filter = g.new_vertex_property('bool', False)
+    g_deg = g.degree_property_map('total')
+    deg_filter.a[:] = g_deg.a > 0
+    subset = g_deg.a == 2  # set to True only nodes with total_deg = 2
+    for e in g.edges():
+        if e.source() == e.target():  # if self-loop
+            if subset[e.source()]:  # in set of nodes with tot_deg = 2
+                deg_filter[e.source()] = False  # filter out node
+    g.set_vertex_filter(deg_filter)
+
+
+def partition_static_component(g, threshold, baseid_name='baseID', weighted=None,
+                               filter_singletons=True, remove_self_edges=False, slack=0.25):
+    if not HAS_GRAPHTOOL:
+        LOGGER.error('Graph-tool not installed, cannot use function partition_static_component')
+        raise ImportError('Graph-tool not installed, cannot use function partition_static_component')
+
+    if threshold > 0.0:
+        filts = list()
+        filts.append(g.edge_properties['in_score'].a > threshold)
+        filts.append(g.edge_properties['out_score'].a > threshold)
+        if remove_self_edges:
+            # Keep non self-edges
+            self_edges = ~gts.label_self_loops(g, mark_only=True).a.astype(bool)
+            filts.append(self_edges)
+        # Logical and of all filters
+        edge_filt = np.logical_and.reduce(filts)
+        g = gt.GraphView(g, efilt=edge_filt)
+
+    if filter_singletons:
+        filter_singletons_inplace(g)
+
+    # res, hist = graph_tool.topology.label_components(comp_static, directed=False)
+    prop = None
+    if weighted:
+        if weighted in g.edge_properties:
+            prop = g.edge_properties[weighted]
+        else:
+            LOGGER.warning('%s not in graph edge properties, skipping.', str(weighted))
+
+    # Find number of connected components
+    res, _ = gtt.label_components(g, directed=False)
+    min_clusters = len(np.unique(res.fa))
+
+    nb_clusters = int(min_clusters * (1 + slack))  # add slack
+    clusters = gtc.community_structure(g, 1000, nb_clusters, weight=prop)
+    # Add communities
+    g.vp.cluster_id = clusters
+    return g
+
+
+def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_singletons=True):
     """Find the block partition of an unspecified size which minimizes the description length of the
     network, according to the stochastic blockmodel ensemble which best describes it. optionally
     remove low probability edges from a dynamic activated component and static_component.
@@ -251,59 +305,34 @@ def partition_dynamic_component(dyn_g, static_g=None, threshold=0.0, thres_key='
         LOGGER.error('Graph-tool not installed, cannot use function partition_dynamic_component')
         raise ImportError('Graph-tool not installed, cannot use function partition_dynamic_component')
 
-    def _purge_singletons(g):
-        g_deg = g.new_vertex_property('bool', False)
-        deg = g.degree_property_map('total')
-        g_deg.a[:] = deg.a > 0
-        g.set_vertex_filter(g_deg)
+    to_keep_static = defaultdict(list)
+    for e in static_g.edges():
+        u = static_g.vertex_properties[baseid_name][e.source()]
+        v = static_g.vertex_properties[baseid_name][e.target()]
+        to_keep_static[u].append(v)
 
-    if static_g is None:
-        static_g = get_weighted_static_component(dyn_g, baseid_name)
+    to_keep_dyn = dyn_g.new_edge_property('bool', False)
+    for e in dyn_g.edges():
+        u = dyn_g.vertex_properties[baseid_name][e.source()]
+        v = dyn_g.vertex_properties[baseid_name][e.target()]
+        if u in to_keep_static:
+            if v in to_keep_static[u]:
+                to_keep_dyn[e] = True
 
-    if threshold > 0.0:
-        filt_static = gt.GraphView(static_g, efilt=lambda e: static_g.edge_properties[thres_key][e] > threshold)
+    # keep all edges set to False (no deletion)
+    dyn_g.set_edge_filter(to_keep_dyn)
 
-        to_keep_static = defaultdict(list)
-        for e in filt_static.edges():
-            u = filt_static.vertex_properties[baseid_name][e.source()]
-            v = filt_static.vertex_properties[baseid_name][e.target()]
-            to_keep_static[u].append(v)
-
-        to_keep_dyn = dyn_g.new_edge_property('bool', False)
-        for e in dyn_g.edges():
-            u = dyn_g.vertex_properties[baseid_name][e.source()]
-            v = dyn_g.vertex_properties[baseid_name][e.target()]
-            if u in to_keep_static:
-                if v in to_keep_static[u]:
-                    to_keep_dyn[e] = True
-
-        # keep all edges set to False (no deletion)
-        dyn_g.set_edge_filter(to_keep_dyn)
-        static_g = filt_static
-        
-    if purge_singletons:
-        _purge_singletons(static_g)
-        _purge_singletons(dyn_g)
-
-    # Cluster static graph
-    clusters = None
-    if method == 'block':
-        clusters = gtc.minimize_blockmodel_dl(static_g).b
-    else:
-        clusters = gtc.community_structure(static_g, 1000, 10, t_range=(5, 0.1),
-                                           weight=static_g.edge_properties[thres_key] if weighted else None)
-
-    # Add communities
-    static_g.vp.cluster_id = clusters
+    if filter_singletons:
+        filter_singletons_inplace(dyn_g)
 
     # Backport communities to dynamic component
-    id2cluster = dict(itertools.izip(static_g.vertex_properties[baseid_name].a, clusters.a))
+    id2cluster = dict(itertools.izip(static_g.vertex_properties[baseid_name].a, static_g.vp.cluster_id.a))
     dyn_g.vp.cluster_id = dyn_g.new_vertex_property('int')
 
     for n in dyn_g.vertices():
         cluster_id = id2cluster[dyn_g.vertex_properties[baseid_name][n]]
         dyn_g.vp.cluster_id[n] = cluster_id
 
-    return dyn_g, static_g
+    return dyn_g
 
 
