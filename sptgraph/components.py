@@ -285,12 +285,16 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
         else:
             LOGGER.warning('%s not in graph edge properties, skipping.', str(weighted))
 
-    # Find number of connected components
+    # Find number of connected components as a minimum of communities
     res, _ = gtt.label_components(g, directed=False)
-    min_clusters = len(np.unique(res.fa))
 
-    nb_clusters = int(min_clusters * (1 + slack))  # add slack
-    clusters = gtc.community_structure(g, 1000, nb_clusters, weight=prop)
+    min_clusters = len(np.unique(res.fa))
+    max_clusters = int(min_clusters * (1 + slack))  # add slack
+
+    if min_clusters == 1:  # no prior on the graph
+        max_clusters = None
+        
+    clusters = gtc.minimize_blockmodel_dl(g, min_B=min_clusters, max_B=max_clusters).b
     # Add communities
     g.vp.cluster_id = clusters
     return g
