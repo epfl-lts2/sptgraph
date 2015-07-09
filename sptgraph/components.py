@@ -76,7 +76,7 @@ def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', lay
         raise ImportError('Networkx not installed, cannot use function')
 
     g = nx.DiGraph()
-    g.name = 'Component ' + str(comp['component_id'])
+    g.component = comp['component_id']
 
     layers = layer_name + 's'
     baseids = baseid_name + 's'
@@ -109,8 +109,8 @@ def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', la
 
     # Create graph
     g = gt.Graph(directed=True)
-    g.gp.name = g.new_graph_property('string')
-    g.gp.name = 'Component ' + str(comp['component_id'])
+    g.gp.component = g.new_graph_property('int')
+    g.gp.component = comp['component_id']
 
     # Vertex properties
     g.vertex_properties[baseid_name] = g.new_vertex_property("int64_t")
@@ -161,6 +161,9 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
     unique_baseids = np.unique(dyn_g.vertex_properties[baseid_name].get_array())
 
     g = gt.Graph(directed=True)
+    g.gp.component = g.new_graph_property('int')
+    g.gp.component = dyn_g.gp.component
+
     vlist = g.add_vertex(len(unique_baseids))
     baseid_map = dict(zip(unique_baseids, vlist))
 
@@ -219,6 +222,7 @@ def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
             g.node[nid][key] = 1
 
     g = nx.DiGraph()  # directed + self-edges
+    g.component = dyn_g.component
     # Add unique nodes
     g.add_nodes_from(set(nx.get_node_attributes(dyn_g, baseid_name).values()))
 
@@ -277,14 +281,6 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
     if filter_singletons:
         filter_singletons_inplace(g)
 
-    # res, hist = graph_tool.topology.label_components(comp_static, directed=False)
-    prop = None
-    if weighted:
-        if weighted in g.edge_properties:
-            prop = g.edge_properties[weighted]
-        else:
-            LOGGER.warning('%s not in graph edge properties, skipping.', str(weighted))
-
     # Find number of connected components as a minimum of communities
     res, _ = gtt.label_components(g, directed=False)
 
@@ -340,3 +336,49 @@ def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_si
     return dyn_g
 
 
+def extract_community_subgraphs(comp):
+
+    def mirror_property_maps(src_g, tgt_g):
+        for k, v in src_g.properties.iteritems():
+            if k != ('v', 'cluster_id'):
+                tgt_g.properties[k] = tgt_g.new_property(k[0], v.value_type())
+
+    def create_graph(gid):
+        g = gt.Graph(directed=True)
+        mirror_property_maps(comp, g)
+        g.gp.component = g.new_graph_property('int')
+        g.gp.cluster_id = g.new_graph_property('int')
+        g.gp.cluster_id = gid
+        return g
+
+    def copy_props(key, src, src_g, tgt, tgt_g):
+        src_props = src_g.vertex_properties if key == 'v' else src_g.edge_properties
+        tgt_props = tgt_g.vertex_properties if key == 'v' else tgt_g.edge_properties
+        for k, v in src_props.iteritems():
+            if k in tgt_props:
+                tgt_props[k][tgt] = v[src]
+
+    # Create graphs
+    graphs = map(create_graph, np.unique(comp.vp.cluster_id.fa))
+
+    # Map comp vertex to subgraphs vertex
+    vertex_map = dict()
+    # Create nodes and fill property maps
+    for n in comp.vertices():
+        cid = comp.vp.cluster_id[n]
+        v = graphs[cid].add_vertex()
+        vertex_map[n] = v
+        copy_props('v', n, comp, v, graphs[cid])
+
+    # Create edges
+    for e in comp.edges():
+        src_cid = comp.vp.cluster_id[e.source()]
+        tgt_cid = comp.vp.cluster_id[e.target()]
+        # Edges should belong to the same community
+        if src_cid != tgt_cid:
+            continue
+
+        arc = graphs[src_cid].add_edge(vertex_map[e.source()], vertex_map[e.target()], False)
+        copy_props('e', e, comp, arc, graphs[src_cid])
+
+    return graphs
