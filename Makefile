@@ -7,7 +7,7 @@ CFLAGS := -std=c++11 -shared -fPIC
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
         CXX := clang
-	CFLAGS += --stdlib=libc++ -undefined dynamic_lookup
+        CFLAGS += --stdlib=libc++ -undefined dynamic_lookup
 endif
 
 SRCS := $(call rwildcard, sptgraph/, *.cpp)

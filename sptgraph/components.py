@@ -3,7 +3,7 @@
 import graphlab as gl
 import numpy as np
 import logging
-from collections import defaultdict
+from collections import defaultdict, Counter
 import itertools
 
 import utils
@@ -130,7 +130,7 @@ def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', la
         vertex_map[comp['nodes'][i]] = v
 
         if layer_to_ts is not None:
-            g.vp.timestamp[v] = layer_to_ts[comp[layers][i]].strftime("%Y-%m-%d %H:%M:%S")
+            g.vp.timestamp[v] = layer_to_ts[comp[layers][i]]
 
     # Add edges
     edges = h.edges[h.edges['component_id'] == comp['component_id']][['__src_id', '__dst_id']]
@@ -158,7 +158,8 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
         LOGGER.error('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
         raise ImportError('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
 
-    unique_baseids = np.unique(dyn_g.vertex_properties[baseid_name].get_array())
+    node_hist = Counter(dyn_g.vertex_properties[baseid_name].get_array())
+    unique_baseids = node_hist.keys()
 
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int')
@@ -166,6 +167,11 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
 
     vlist = g.add_vertex(len(unique_baseids))
     baseid_map = dict(zip(unique_baseids, vlist))
+
+    # Node importance
+    g.vp.count = g.new_vertex_property('int', 0)
+    for k, v in node_hist.iteritems():
+        g.vp.count[baseid_map[k]] = v
 
     g.vp.in_deg = g.new_vertex_property('int', 0)
     g.vp.out_deg = g.new_vertex_property('int', 0)
@@ -224,7 +230,8 @@ def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
     g = nx.DiGraph()  # directed + self-edges
     g.component = dyn_g.component
     # Add unique nodes
-    g.add_nodes_from(set(nx.get_node_attributes(dyn_g, baseid_name).values()))
+    node_hist = Counter(nx.get_node_attributes(dyn_g, baseid_name).values())
+    g.add_nodes_from([(k, {'count': v}) for k, v in node_hist.iteritems()])
 
     for (u, v) in dyn_g.edges_iter():
         src = dyn_g.node[u][baseid_name]
