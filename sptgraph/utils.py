@@ -1,9 +1,18 @@
 # -*- coding: utf-8 -*-
 
+import os
 import datetime
 import graphlab as gl
 import pandas as pd
 import ctypes
+
+# Use the built-in version of scandir/walk if possible, otherwise
+# use the scandir module version
+try:
+    from os import scandir, walk
+except ImportError:
+    from scandir import scandir, walk
+
 
 def networkx_to_graphlab(g):
     p = gl.SGraph()
@@ -49,3 +58,15 @@ def to_multi_dict(items):
         d.setdefault(k, []).append(v)
         return d
     return reduce(insert, [{}] + items)
+
+
+def list_dir(dirpath, fullpath=False):
+    """List files by name..."""
+    paths = []
+    for fn in scandir(dirpath):
+        name = fn.name
+        if fullpath:
+            name = os.path.join(dirpath, name)
+        paths.append(name)
+    return paths
+

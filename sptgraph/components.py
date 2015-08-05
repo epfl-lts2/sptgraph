@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import os
 import graphlab as gl
 import numpy as np
 import logging
@@ -11,6 +12,10 @@ import utils
 LOGGER = logging.getLogger(__name__)
 HAS_GRAPHTOOL = False
 HAS_NETWORKX = False
+
+STATIC_COMP_TYPE = 1
+DYN_COMP_TYPE = 2
+ALL_COMP_TYPE = STATIC_COMP_TYPE + DYN_COMP_TYPE
 
 try:
     import graph_tool.all as gt
@@ -111,6 +116,8 @@ def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', la
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int')
     g.gp.component = comp['component_id']
+    g.gp.type = g.new_graph_property('int')
+    g.gp.type = DYN_COMP_TYPE
 
     # Vertex properties
     g.vertex_properties[baseid_name] = g.new_vertex_property("int64_t")
@@ -141,6 +148,7 @@ def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', la
 
     return g
 
+
 def get_weighted_static_component(dyn_g, baseid_name='baseID'):
     """Flatten dynamic component to a spatial static graph with some properties on the graph."""
     if HAS_NETWORKX and isinstance(dyn_g, nx.DiGraph):
@@ -164,6 +172,8 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int')
     g.gp.component = dyn_g.gp.component
+    g.gp.type = g.new_graph_property('int')
+    g.gp.type = STATIC_COMP_TYPE
 
     vlist = g.add_vertex(len(unique_baseids))
     baseid_map = dict(zip(unique_baseids, vlist))
@@ -229,6 +239,7 @@ def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
 
     g = nx.DiGraph()  # directed + self-edges
     g.component = dyn_g.component
+    g.type = STATIC_COMP_TYPE
     # Add unique nodes
     node_hist = Counter(nx.get_node_attributes(dyn_g, baseid_name).values())
     g.add_nodes_from([(k, {'count': v}) for k, v in node_hist.iteritems()])
@@ -288,6 +299,9 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
     if filter_singletons:
         filter_singletons_inplace(g)
 
+    if g.num_vertices() == 0:
+        return None
+
     # Find number of connected components as a minimum of communities
     res, _ = gtt.label_components(g, directed=False)
 
@@ -296,7 +310,7 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
 
     if min_clusters == 1:  # no prior on the graph
         max_clusters = None
-        
+
     clusters = gtc.minimize_blockmodel_dl(g, min_B=min_clusters, max_B=max_clusters).b
     # Add communities
     g.vp.cluster_id = clusters
@@ -305,8 +319,8 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
 
 def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_singletons=True):
     """Find the block partition of an unspecified size which minimizes the description length of the
-    network, according to the stochastic blockmodel ensemble which best describes it. optionally
-    remove low probability edges from a dynamic activated component and static_component.
+    network, according to the stochastic blockmodel ensemble which best describes it. Optionally
+    remove low likelihood in and out edges from a dynamic activated component and static component.
     """
     if not HAS_GRAPHTOOL:
         LOGGER.error('Graph-tool not installed, cannot use function partition_dynamic_component')
@@ -344,7 +358,10 @@ def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_si
 
 
 def extract_community_subgraphs(comp):
+    """Extract communities from a component. Associated properties are copied in each community and the property
+    `cluster_id` is stored as a graph property for each community
 
+    """
     def mirror_property_maps(src_g, tgt_g):
         for k, v in src_g.properties.iteritems():
             if k != ('v', 'cluster_id'):
@@ -354,8 +371,11 @@ def extract_community_subgraphs(comp):
         g = gt.Graph(directed=True)
         mirror_property_maps(comp, g)
         g.gp.component = g.new_graph_property('int')
+        g.gp.component = comp.gp.component  # comp id
         g.gp.cluster_id = g.new_graph_property('int')
         g.gp.cluster_id = gid
+        g.gp.type = g.new_graph_property('int')
+        g.gp.type = comp.gp.type
         return g
 
     def copy_props(key, src, src_g, tgt, tgt_g):
@@ -366,7 +386,7 @@ def extract_community_subgraphs(comp):
                 tgt_props[k][tgt] = v[src]
 
     # Create graphs
-    graphs = map(create_graph, np.unique(comp.vp.cluster_id.fa))
+    graphs = map(create_graph, np.unique(comp.vp.cluster_id.a))
 
     # Map comp vertex to subgraphs vertex
     vertex_map = dict()
@@ -389,3 +409,76 @@ def extract_community_subgraphs(comp):
         copy_props('e', e, comp, arc, graphs[src_cid])
 
     return graphs
+
+
+def save_gt_components(comps, out_dir, verbose=False):
+    """Save graph-tool components to disk"""
+    if not os.path.exists(out_dir):
+        os.mkdir(out_dir)
+
+    for i, c in enumerate(comps):
+        name = ''
+        if 'type' in c.graph_properties:
+            name += 'st_' if c.gp.type == STATIC_COMP_TYPE else 'dyn_'
+        name += 'comp_'
+        if 'component' in c.graph_properties:
+            name += str(c.gp.component)
+        else:
+            name += str(i)
+
+        if 'cluster_id' in c.graph_properties:
+            name += '_' + str(c.gp.cluster_id)
+
+        path = str(os.path.join(out_dir, name + '.gt'))
+        c.save(path)
+        if verbose:
+            LOGGER.info('Wrote {0}'.format(path))
+
+
+def load_gt_components(input_dir, comp_type=ALL_COMP_TYPE):
+    """Load graph-tool components from disk, if comp type is 2 return all types of components"""
+    comps = defaultdict(list)
+    for f in utils.list_dir(input_dir, fullpath=True):
+        path = str(f)
+        name = os.path.basename(path)
+        if name.startswith('st') and comp_type in [STATIC_COMP_TYPE, ALL_COMP_TYPE]:
+            comps['static'].append(gt.load_graph(path))
+
+        if name.startswith('dyn') and comp_type in [DYN_COMP_TYPE, ALL_COMP_TYPE]:
+            comps['dynamic'].append(gt.load_graph(path))
+    return comps
+
+
+def extract_molecular_components(comp, h, score_threshold=0.05, baseid_name='page_id',
+                                 layer_name='layer', layer_to_ts=None, with_dynamic=True):
+    """Extract molecular components from graphlab dynamic activated component. The score threshold allows
+    to prune out low-likelihood in and out edges when the dynamic component is contracted to a static component.
+    The parameter `with_dynamic` returns the associated dynamic molecular components associated to normal output: the
+    static molecular components. The parameter layer_ts maps a layer id to a timestamp for better readability.
+
+    """
+    dyn_comp = component_to_graphtool(comp, h, baseid_name, layer_name, layer_to_ts)
+    static_comp = get_weighted_static_component(dyn_comp, baseid_name)
+    static_comp = partition_static_component(static_comp, score_threshold, baseid_name)
+    if static_comp is None:  # filter all nodes
+        return None
+
+    static_coms = extract_community_subgraphs(static_comp)
+    if with_dynamic:
+        dyn_comp = partition_dynamic_component(dyn_comp, static_comp, baseid_name)
+        dyn_coms = extract_community_subgraphs(dyn_comp)
+        return zip(static_coms, dyn_coms)
+    else:
+        return static_coms
+
+
+def extract_all_molecular_components(gl_components, h, score_threshold=0.05, baseid_name='page_id',
+                                     layer_name='layer', layer_to_ts=None, with_dynamic=True):
+    for row in gl_components:
+        res = extract_molecular_components(row, h, score_threshold, baseid_name, layer_name, layer_to_ts, with_dynamic)
+        if not res:
+            continue
+        for c in res:
+            yield c
+
+
