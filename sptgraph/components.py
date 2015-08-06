@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import sys
 import os
 import graphlab as gl
 import numpy as np
@@ -169,13 +170,18 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
     node_hist = Counter(dyn_g.vertex_properties[baseid_name].get_array())
     unique_baseids = node_hist.keys()
 
+    N = len(unique_baseids)
+    assert(N > 0)
+
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int')
     g.gp.component = dyn_g.gp.component
     g.gp.type = g.new_graph_property('int')
     g.gp.type = STATIC_COMP_TYPE
 
-    vlist = g.add_vertex(len(unique_baseids))
+    vlist = g.add_vertex(N)
+    if N == 1:
+        vlist = [vlist]
     baseid_map = dict(zip(unique_baseids, vlist))
 
     # Node importance
@@ -302,16 +308,23 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
     if g.num_vertices() == 0:
         return None
 
+    if g.num_vertices() < 4:  # do not partition below 4 nodes
+        g.vp.cluster_id = g.new_vertex_property('int', 0)
+        return g
+
     # Find number of connected components as a minimum of communities
     res, _ = gtt.label_components(g, directed=False)
 
     min_clusters = len(np.unique(res.fa))
-    max_clusters = int(min_clusters * (1 + slack))  # add slack
+    max_clusters = int(min_clusters * (2 + slack))  # add slack
+    if min_clusters == max_clusters:
+        max_clusters += 1
 
     if min_clusters == 1:  # no prior on the graph
         max_clusters = None
 
-    clusters = gtc.minimize_blockmodel_dl(g, min_B=min_clusters, max_B=max_clusters).b
+    # monkey-path graph_tool in blockmodel.py
+    clusters = gtc.minimize_blockmodel_dl(g, min_B=min_clusters, max_B=max_clusters, verbose=False).b
     # Add communities
     g.vp.cluster_id = clusters
     return g
@@ -411,28 +424,32 @@ def extract_community_subgraphs(comp):
     return graphs
 
 
+def save_gt_component(c, out_dir, i=0, verbose=False):
+    name = ''
+    if 'type' in c.graph_properties:
+        name += 'st_' if c.gp.type == STATIC_COMP_TYPE else 'dyn_'
+    name += 'comp_'
+    if 'component' in c.graph_properties:
+        name += str(c.gp.component)
+    else:
+        name += str(i)
+
+    if 'cluster_id' in c.graph_properties:
+        name += '_' + str(c.gp.cluster_id)
+
+    path = str(os.path.join(out_dir, name + '.gt'))
+    c.save(path)
+    if verbose:
+        LOGGER.info('Wrote {0}'.format(path))
+
+
 def save_gt_components(comps, out_dir, verbose=False):
     """Save graph-tool components to disk"""
     if not os.path.exists(out_dir):
         os.mkdir(out_dir)
 
     for i, c in enumerate(comps):
-        name = ''
-        if 'type' in c.graph_properties:
-            name += 'st_' if c.gp.type == STATIC_COMP_TYPE else 'dyn_'
-        name += 'comp_'
-        if 'component' in c.graph_properties:
-            name += str(c.gp.component)
-        else:
-            name += str(i)
-
-        if 'cluster_id' in c.graph_properties:
-            name += '_' + str(c.gp.cluster_id)
-
-        path = str(os.path.join(out_dir, name + '.gt'))
-        c.save(path)
-        if verbose:
-            LOGGER.info('Wrote {0}'.format(path))
+        save_gt_component(c, out_dir, i, verbose)
 
 
 def load_gt_components(input_dir, comp_type=ALL_COMP_TYPE):
@@ -449,8 +466,8 @@ def load_gt_components(input_dir, comp_type=ALL_COMP_TYPE):
     return comps
 
 
-def extract_molecular_components(comp, h, score_threshold=0.05, baseid_name='page_id',
-                                 layer_name='layer', layer_to_ts=None, with_dynamic=True):
+def extract_molecular_components(comp, h, out_dir=None, score_threshold=0.05, baseid_name='page_id',
+                                 layer_name='layer', layer_to_ts=None, with_dynamic=True, verbose=False):
     """Extract molecular components from graphlab dynamic activated component. The score threshold allows
     to prune out low-likelihood in and out edges when the dynamic component is contracted to a static component.
     The parameter `with_dynamic` returns the associated dynamic molecular components associated to normal output: the
@@ -461,24 +478,47 @@ def extract_molecular_components(comp, h, score_threshold=0.05, baseid_name='pag
     static_comp = get_weighted_static_component(dyn_comp, baseid_name)
     static_comp = partition_static_component(static_comp, score_threshold, baseid_name)
     if static_comp is None:  # filter all nodes
+        # print 'Filter out', dyn_comp.gp.component
         return None
 
     static_coms = extract_community_subgraphs(static_comp)
+
+    if out_dir:
+        save_gt_components(static_coms, out_dir, verbose)
+
     if with_dynamic:
         dyn_comp = partition_dynamic_component(dyn_comp, static_comp, baseid_name)
         dyn_coms = extract_community_subgraphs(dyn_comp)
+        if out_dir:
+            save_gt_components(dyn_coms, out_dir, verbose)
+
         return zip(static_coms, dyn_coms)
     else:
         return static_coms
 
 
-def extract_all_molecular_components(gl_components, h, score_threshold=0.05, baseid_name='page_id',
-                                     layer_name='layer', layer_to_ts=None, with_dynamic=True):
+def extract_all_molecular_components_par(gl_components, h, out_dir, score_threshold=0.05, baseid_name='page_id',
+                                         layer_name='layer', layer_to_ts=None, with_dynamic=True):
+    """Extract all molecular components in parallel by dumping them on disk and reading them back sequentially.
+    Returns static molecular components (optionally dynamic ones) and the number of molecules per components.
+
+    """
+    def go(x):
+        _ = extract_molecular_components(x, h, out_dir, score_threshold, baseid_name,
+                                         layer_name, layer_to_ts, with_dynamic)
+        return 0
+    gl_components.apply(go, dtype=int)
+    return load_gt_components(out_dir, STATIC_COMP_TYPE + (DYN_COMP_TYPE if with_dynamic else 0))
+
+
+def extract_all_molecular_components_seq(gl_components, h, out_dir, score_threshold=0.05, baseid_name='page_id',
+                                         layer_name='layer', layer_to_ts=None, with_dynamic=True):
+    """Extract all molecular components sequentially by dumping them on disk and reading them back sequentially.
+    Returns static molecular components (optionally dynamic ones) and the number of molecules per components.
+    """
     for row in gl_components:
-        res = extract_molecular_components(row, h, score_threshold, baseid_name, layer_name, layer_to_ts, with_dynamic)
-        if not res:
-            continue
-        for c in res:
-            yield c
+        _ = extract_molecular_components(row, h, out_dir, score_threshold, baseid_name,
+                                         layer_name, layer_to_ts, with_dynamic)
+    return load_gt_components(out_dir, STATIC_COMP_TYPE + (DYN_COMP_TYPE if with_dynamic else 0))
 
 
