@@ -19,7 +19,7 @@ TARGETS := $(SRCS:%.cpp=%.so)
 all: $(TARGETS)
 
 %.so: %.cpp
-	$(CXX) -o $@ $(CFLAGS) -I $(GRAPHLAB_SDK_HOME) $^
+	$(CXX) -o $@ $(CFLAGS) -I $(GRAPHLAB_SDK_HOME) -I /usr/local/include $^
 
 
 help:

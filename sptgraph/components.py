@@ -520,5 +520,3 @@ def extract_all_molecular_components_seq(gl_components, h, out_dir, score_thresh
         _ = extract_molecular_components(row, h, out_dir, score_threshold, baseid_name,
                                          layer_name, layer_to_ts, with_dynamic)
     return load_gt_components(out_dir, STATIC_COMP_TYPE + (DYN_COMP_TYPE if with_dynamic else 0))
-
-
