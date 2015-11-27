@@ -272,7 +272,7 @@ def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
     return g
 
 
-def filter_singletons_inplace(g):
+def filter_singletons(g, purge=False):
     deg_filter = g.new_vertex_property('bool', False)
     g_deg = g.degree_property_map('total')
     deg_filter.a[:] = g_deg.a > 0
@@ -283,9 +283,14 @@ def filter_singletons_inplace(g):
                 deg_filter[e.source()] = False  # filter out node
     g.set_vertex_filter(deg_filter)
 
+    if purge:
+        g.purge_vertices()
+        # g.purge_edges()
+    return g
+
 
 def partition_static_component(g, threshold, baseid_name='baseID', weighted=None,
-                               filter_singletons=True, remove_self_edges=False, slack=0.25):
+                               filter_single=True, remove_self_edges=False, slack=0.25):
     if not HAS_GRAPHTOOL:
         LOGGER.error('Graph-tool not installed, cannot use function partition_static_component')
         raise ImportError('Graph-tool not installed, cannot use function partition_static_component')
@@ -302,8 +307,8 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
         edge_filt = np.logical_and.reduce(filts)
         g = gt.GraphView(g, efilt=edge_filt)
 
-    if filter_singletons:
-        filter_singletons_inplace(g)
+    if filter_single:
+        g = filter_singletons(g)
 
     if g.num_vertices() == 0:
         return None
@@ -330,7 +335,7 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
     return g
 
 
-def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_singletons=True):
+def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_single=True):
     """Find the block partition of an unspecified size which minimizes the description length of the
     network, according to the stochastic blockmodel ensemble which best describes it. Optionally
     remove low likelihood in and out edges from a dynamic activated component and static component.
@@ -356,8 +361,8 @@ def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_si
     # keep all edges set to False (no deletion)
     dyn_g.set_edge_filter(to_keep_dyn)
 
-    if filter_singletons:
-        filter_singletons_inplace(dyn_g)
+    if filter_single:
+        dyn_g = filter_singletons(dyn_g)
 
     # Backport communities to dynamic component
     id2cluster = dict(itertools.izip(static_g.vertex_properties[baseid_name].a, static_g.vp.cluster_id.a))
