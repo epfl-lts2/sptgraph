@@ -62,11 +62,9 @@ def to_multi_dict(items):
 
 def list_dir(dirpath, fullpath=False):
     """List files by name..."""
-    paths = []
     for fn in scandir(dirpath):
         name = fn.name
         if fullpath:
             name = os.path.join(dirpath, name)
-        paths.append(name)
-    return paths
+        yield name
 

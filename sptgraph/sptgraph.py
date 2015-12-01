@@ -13,6 +13,7 @@ import utils
 import sptgraph_impl
 import logging
 LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(logging.INFO)
 
 try:
     import ext.sptgraph_fast as fast
@@ -21,7 +22,7 @@ except ImportError:
     HAS_FAST_MODULE = False
 
 
-def create_node_signal(data, baseid_name, layer_name, verbose=True):
+def create_node_signal(signal, baseid_name, layer_name, verbose=True):
     """Create signal on the node from pandas DataFrame or Graphlab SFrame"""
 
     def layers_to_long_str(x):
@@ -31,11 +32,6 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
     start = time.time()
     if verbose:
         LOGGER.info('Create node signal')
-
-    if isinstance(data, pd.DataFrame):
-        signal = gl.SFrame(data[[baseid_name, layer_name]])
-    else:
-        signal = gl.SFrame(data)
 
     nb_layers = signal[layer_name].max() + 1
     # Create the bitspace
@@ -52,13 +48,8 @@ def create_node_signal(data, baseid_name, layer_name, verbose=True):
     return node_signal
 
 
-def create_node_signal_fast(data, baseid_name, layer_name, verbose=True):
+def create_node_signal_fast(signal, baseid_name, layer_name, verbose=True):
     start = time.time()
-    if isinstance(data, pd.DataFrame):
-        signal = gl.SFrame(data[[baseid_name, layer_name]])
-    else:
-        signal = gl.SFrame(data)
-
     nb_layers = signal[layer_name].max() + 1  # starts at 0
     res = fast.aggregate_layers(signal, baseid_name, layer_name, nb_layers)
     if verbose:
@@ -109,10 +100,12 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
     if verbose:
         LOGGER.info('Start spatio-temporal graph creation')
 
+    signal = gl.SFrame(data)
+
     if HAS_FAST_MODULE and not force_python:
-        node_signal = create_node_signal_fast(data, baseid_name, layer_name, verbose=verbose)
+        node_signal = create_node_signal_fast(signal, baseid_name, layer_name, verbose=verbose)
     else:
-        node_signal = create_node_signal(data, baseid_name, layer_name, verbose=verbose)
+        node_signal = create_node_signal(signal, baseid_name, layer_name, verbose=verbose)
     sg = merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=excluded_ids, verbose=verbose)
     # Create graph
     if HAS_FAST_MODULE and not force_python:
@@ -120,10 +113,12 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
     else:
         h = sptgraph_impl.build_sptgraph(sg, create_self_edges, baseid_name, layer_name)
 
+    k = gl.SGraph(h.vertices.join(signal, ['page_id', 'layer']), h.edges)
+
     if verbose:
         LOGGER.info('Spatio-temporal graph created in: %s seconds', time.time() - start)
 
-    return h
+    return k
 
 
 def get_max_id(spatial_graph):

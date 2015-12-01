@@ -11,6 +11,8 @@ import itertools
 import utils
 
 LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(logging.INFO)
+
 HAS_GRAPHTOOL = False
 HAS_NETWORKX = False
 
@@ -45,20 +47,21 @@ def find_connected_components(g):
     return gl.SGraph(nodes, edges)
 
 
-def get_component_sframe(g, baseid_name='baseID', layer_name='layer'):
+def get_component_sframe(g, baseid_name='page_id', layer_name='layer'):
     """Get component SFrame enriched with structural properties for each component"""
 
-    baseids = baseid_name + 's'  # store array of base ids
-    layers = layer_name + 's'
-    comps = g.vertices.groupby('component_id', {
-        'nodes': gl.aggregate.CONCAT('__id'),
-        layers: gl.aggregate.CONCAT(layer_name),
-        baseid_name + 's': gl.aggregate.CONCAT(baseid_name),
-        'node_count': gl.aggregate.COUNT('__id')
-    })
+    columns = g.vertices.column_names()
+    columns.remove('__id')
+    columns.remove('component_id')
 
-    comps['width'] = comps.apply(lambda x: len(np.unique(x[layers])))
-    comps['height'] = comps.apply(lambda x: len(np.unique(x[baseids])))
+    # Append s to have unique column names (required by graphlab)
+    gb_dict = {c + 's': gl.aggregate.CONCAT(c) for c in columns}
+    gb_dict['nids'] = gl.aggregate.CONCAT('__id')
+    gb_dict['node_count'] = gl.aggregate.COUNT('__id')
+    comps = g.vertices.groupby('component_id', gb_dict)
+
+    comps['width'] = comps.apply(lambda x: len(np.unique(x[layer_name + 's'])))
+    comps['height'] = comps.apply(lambda x: len(np.unique(x[baseid_name + 's'])))
 
     return comps.sort('node_count', False)
 
@@ -76,7 +79,7 @@ def extract_components(g, comp_sframe, min_node_count=2):
     return comps
 
 
-def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', layer_to_ts=None):
+def component_to_networkx(comp, h, baseid_name='page_id', layer_name='layer', layer_to_ts=None):
     if not HAS_NETWORKX:
         LOGGER.error('Networkx not installed, cannot use function')
         raise ImportError('Networkx not installed, cannot use function')
@@ -89,14 +92,14 @@ def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', lay
 
     if layer_to_ts is not None:
         for i in xrange(comp['node_count']):
-            g.add_node(comp['nodes'][i],
+            g.add_node(comp['nids'][i],
                       {baseid_name: comp[baseids][i], layer_name: comp[layers][i],
                        'timestamp': layer_to_ts[comp[layers][i]].strftime("%Y-%m-%d %H:%M:%S"),
                        'label': comp[baseids][i]
                       })
     else:
         for i in xrange(comp['node_count']):
-            g.add_node(comp['nodes'][i], {baseid_name: comp[baseids][i], layer_name: comp[layers][i]})
+            g.add_node(comp['nids'][i], {baseid_name: comp[baseids][i], layer_name: comp[layers][i]})
 
     edges = h.edges[h.edges['component_id'] == comp['component_id']][['__src_id', '__dst_id']]
     for k in edges:
@@ -105,40 +108,43 @@ def component_to_networkx(comp, h, baseid_name='baseID', layer_name='layer', lay
     return g
 
 
-def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', layer_to_ts=None):
+def component_to_graphtool(comp, h, baseid_name='page_id', layer_name='layer', layer_to_ts=None, extra_props=None):
     if not HAS_GRAPHTOOL:
         LOGGER.error('graph-tool not installed, cannot use function')
         raise ImportError('graph-tool not installed, cannot use function')
 
-    layers = layer_name + 's'
-    baseids = baseid_name + 's'
-
     # Create graph
     g = gt.Graph(directed=True)
-    g.gp.component = g.new_graph_property('int')
-    g.gp.component = comp['component_id']
-    g.gp.type = g.new_graph_property('int')
-    g.gp.type = DYN_COMP_TYPE
+    g.gp.component = g.new_graph_property('int', comp['component_id'])
+    g.gp.type = g.new_graph_property('int', DYN_COMP_TYPE)
+    g.gp.height = g.new_graph_property('int', comp['height'])
+    g.gp.width = g.new_graph_property('int', comp['width'])
 
-    # Vertex properties
-    g.vertex_properties[baseid_name] = g.new_vertex_property("int64_t")
-    g.vertex_properties[layer_name] = g.new_vertex_property("int32_t")
-    g.vp.nid = g.new_vertex_property("int64_t")
+    # Create Vertex properties
+    prop_map = {baseid_name: 'int64_t', layer_name: 'int32_t', 'nid': 'int64_t'}
+    if extra_props is not None:  # extra prop are doubles
+        if isinstance(extra_props, (basestring, unicode)):
+            extra_props = (extra_props, )
+        for p in extra_props:
+            prop_map[p] = 'double'
+
+    for k, v in prop_map.iteritems():
+        g.vertex_properties[k] = g.new_vertex_property(v)
+
+    # Special timestamp prop
     if layer_to_ts is not None:
-        g.vp.timestamp = g.new_vertex_property("string")
+        g.vertex_properties['timestamp'] = g.new_vertex_property('string')
 
     # Add nodes
     vertex_map = dict()  # idx mapping
     vlist = g.add_vertex(comp['node_count'])
     for i, v in enumerate(vlist):
-        g.vertex_properties[baseid_name][v] = comp[baseids][i]
-        g.vertex_properties[layer_name][v] = comp[layers][i]
-        g.vp.nid[v] = comp['nodes'][i]
-
-        vertex_map[comp['nodes'][i]] = v
+        for prop_name in prop_map.keys():
+            g.vertex_properties[prop_name][v] = comp[prop_name + 's'][i]
+        vertex_map[comp['nids'][i]] = v
 
         if layer_to_ts is not None:
-            g.vp.timestamp[v] = layer_to_ts[comp[layers][i]]
+            g.vertex_properties['timestamp'][v] = layer_to_ts[comp[layer_name + 's'][i]]
 
     # Add edges
     edges = h.edges[h.edges['component_id'] == comp['component_id']][['__src_id', '__dst_id']]
@@ -150,54 +156,69 @@ def component_to_graphtool(comp, h, baseid_name='baseID', layer_name='layer', la
     return g
 
 
-def get_weighted_static_component(dyn_g, baseid_name='baseID'):
+def get_weighted_static_component(dyn_g, baseid_name='page_id', extra_props=('count_views', )):
     """Flatten dynamic component to a spatial static graph with some properties on the graph."""
     if HAS_NETWORKX and isinstance(dyn_g, nx.DiGraph):
         return _get_weighted_static_component_nx(dyn_g, baseid_name)
 
     if HAS_GRAPHTOOL and isinstance(dyn_g, gt.Graph):
-        return _get_weighted_static_component_gt(dyn_g, baseid_name)
+        return _get_weighted_static_component_gt(dyn_g, baseid_name, extra_props)
 
     LOGGER.error('Dynamic graph format not supported')
     return None
 
 
-def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
+def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props=('count_views', )):
     if not HAS_GRAPHTOOL:
         LOGGER.error('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
         raise ImportError('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
 
-    node_hist = Counter(dyn_g.vertex_properties[baseid_name].get_array())
-    unique_baseids = node_hist.keys()
-
+    # node_hist = Counter(dyn_g.vertex_properties[baseid_name].get_array())
+    unique_baseids = np.unique(dyn_g.vertex_properties[baseid_name].get_array())
     N = len(unique_baseids)
     assert(N > 0)
 
     g = gt.Graph(directed=True)
-    g.gp.component = g.new_graph_property('int')
-    g.gp.component = dyn_g.gp.component
-    g.gp.type = g.new_graph_property('int')
-    g.gp.type = STATIC_COMP_TYPE
+    g.gp.component = g.new_graph_property('int', dyn_g.gp.component)
+    g.gp.type = g.new_graph_property('int', STATIC_COMP_TYPE)
+    g.gp.height = g.new_graph_property('int', dyn_g.gp.height)
+    g.gp.width = g.new_graph_property('int', dyn_g.gp.width)
+
+    # Vertex props
+    g.vp.count = g.new_vertex_property('int', 0)  # node importance
+    g.vp.in_deg = g.new_vertex_property('int', 0)
+    g.vp.out_deg = g.new_vertex_property('int', 0)
+    g.vertex_properties[baseid_name] = g.new_vertex_property('int64_t')
+
+    # Extra props
+    if extra_props is not None:  # extra prop are doubles
+        if isinstance(extra_props, (basestring, unicode)):
+            extra_props = (extra_props, )
+        for p in extra_props:
+            g.vertex_properties[p] = g.new_vertex_property('double')
+
+    # Edge props
+    g.ep.count = g.new_edge_property('int', 1)
+    g.ep.out_score = g.new_edge_property('double', 0)
+    g.ep.in_score = g.new_edge_property('double', 0)
+    g.ep.score = g.new_edge_property('double', 0)
 
     vlist = g.add_vertex(N)
     if N == 1:
         vlist = [vlist]
     baseid_map = dict(zip(unique_baseids, vlist))
 
-    # Node importance
-    g.vp.count = g.new_vertex_property('int', 0)
-    for k, v in node_hist.iteritems():
-        g.vp.count[baseid_map[k]] = v
+    # Compress values on nodes
+    for n in dyn_g.vertices():
+        base_id = dyn_g.vertex_properties[baseid_name][n]
+        g.vp.count[baseid_map[base_id]] += 1
 
-    g.vp.in_deg = g.new_vertex_property('int', 0)
-    g.vp.out_deg = g.new_vertex_property('int', 0)
-    g.vertex_properties[baseid_name] = g.new_vertex_property('int64_t')
+        if extra_props is not None:  # agglomerate extra props
+            for p in extra_props:
+                k = dyn_g.vertex_properties[p][n]  # get prop
+                g.vertex_properties[p][baseid_map[base_id]] += k  # agg
 
-    g.ep.count = g.new_edge_property('int', 1)
-    g.ep.out_score = g.new_edge_property('double', 0)
-    g.ep.in_score = g.new_edge_property('double', 0)
-    g.ep.score = g.new_edge_property('double', 0)
-
+    # Compress edges
     for arc in dyn_g.edges():
         # static g
         u = dyn_g.vertex_properties[baseid_name][arc.source()]
@@ -231,7 +252,7 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='baseID'):
     return g
 
 
-def _get_weighted_static_component_nx(dyn_g,  baseid_name='baseID'):
+def _get_weighted_static_component_nx(dyn_g,  baseid_name='page_id'):
     if not HAS_NETWORKX:
         LOGGER.error('Networkx not installed, cannot use function _get_weighted_static_component_nx')
         raise ImportError('Networkx not installed, cannot use function _get_weighted_static_component_nx')
@@ -289,7 +310,7 @@ def filter_singletons(g, purge=False):
     return g
 
 
-def partition_static_component(g, threshold, baseid_name='baseID', weighted=None,
+def partition_static_component(g, threshold, baseid_name='page_id', weighted=None,
                                filter_single=True, remove_self_edges=False, slack=0.25):
     if not HAS_GRAPHTOOL:
         LOGGER.error('Graph-tool not installed, cannot use function partition_static_component')
@@ -335,7 +356,7 @@ def partition_static_component(g, threshold, baseid_name='baseID', weighted=None
     return g
 
 
-def partition_dynamic_component(dyn_g, static_g, baseid_name='baseID', filter_single=True):
+def partition_dynamic_component(dyn_g, static_g, baseid_name='page_id', filter_single=True):
     """Find the block partition of an unspecified size which minimizes the description length of the
     network, according to the stochastic blockmodel ensemble which best describes it. Optionally
     remove low likelihood in and out edges from a dynamic activated component and static component.
@@ -445,7 +466,7 @@ def save_gt_component(c, out_dir, i=0, verbose=False):
     path = str(os.path.join(out_dir, name + '.gt'))
     c.save(path)
     if verbose:
-        LOGGER.info('Wrote {0}'.format(path))
+        LOGGER.info('Wrote {}'.format(path))
 
 
 def save_gt_components(comps, out_dir, verbose=False):
@@ -463,27 +484,28 @@ def load_gt_components(input_dir, comp_type=ALL_COMP_TYPE):
     for f in utils.list_dir(input_dir, fullpath=True):
         path = str(f)
         name = os.path.basename(path)
-        if name.startswith('st') and comp_type in [STATIC_COMP_TYPE, ALL_COMP_TYPE]:
+        if name.startswith('st') and comp_type in (STATIC_COMP_TYPE, ALL_COMP_TYPE):
             comps['static'].append(gt.load_graph(path))
 
-        if name.startswith('dyn') and comp_type in [DYN_COMP_TYPE, ALL_COMP_TYPE]:
+        if name.startswith('dyn') and comp_type in (DYN_COMP_TYPE, ALL_COMP_TYPE):
             comps['dynamic'].append(gt.load_graph(path))
     return comps
 
 
 def extract_molecular_components(comp, h, out_dir=None, score_threshold=0.05, baseid_name='page_id',
-                                 layer_name='layer', layer_to_ts=None, with_dynamic=True, verbose=False):
+                                 layer_name='layer', layer_to_ts=None, with_dynamic=True,
+                                 extra_props=('count_views', ),
+                                 verbose=False):
     """Extract molecular components from graphlab dynamic activated component. The score threshold allows
     to prune out low-likelihood in and out edges when the dynamic component is contracted to a static component.
     The parameter `with_dynamic` returns the associated dynamic molecular components associated to normal output: the
     static molecular components. The parameter layer_ts maps a layer id to a timestamp for better readability.
 
     """
-    dyn_comp = component_to_graphtool(comp, h, baseid_name, layer_name, layer_to_ts)
-    static_comp = get_weighted_static_component(dyn_comp, baseid_name)
+    dyn_comp = component_to_graphtool(comp, h, baseid_name, layer_name, layer_to_ts, extra_props)
+    static_comp = _get_weighted_static_component_gt(dyn_comp, baseid_name, extra_props)
     static_comp = partition_static_component(static_comp, score_threshold, baseid_name)
     if static_comp is None:  # filter all nodes
-        # print 'Filter out', dyn_comp.gp.component
         return None
 
     static_coms = extract_community_subgraphs(static_comp)
@@ -502,26 +524,13 @@ def extract_molecular_components(comp, h, out_dir=None, score_threshold=0.05, ba
         return static_coms
 
 
-def extract_all_molecular_components_par(gl_components, h, out_dir, score_threshold=0.05, baseid_name='page_id',
-                                         layer_name='layer', layer_to_ts=None, with_dynamic=True):
-    """Extract all molecular components in parallel by dumping them on disk and reading them back sequentially.
-    Returns static molecular components (optionally dynamic ones) and the number of molecules per components.
-
-    """
-    def go(x):
-        _ = extract_molecular_components(x, h, out_dir, score_threshold, baseid_name,
-                                         layer_name, layer_to_ts, with_dynamic)
-        return 0
-    gl_components.apply(go, dtype=int)
-    return load_gt_components(out_dir, STATIC_COMP_TYPE + (DYN_COMP_TYPE if with_dynamic else 0))
-
-
 def extract_all_molecular_components_seq(gl_components, h, out_dir, score_threshold=0.05, baseid_name='page_id',
-                                         layer_name='layer', layer_to_ts=None, with_dynamic=True):
+                                         layer_name='layer', layer_to_ts=None, with_dynamic=True,
+                                         extra_props=('count_views', )):
     """Extract all molecular components sequentially by dumping them on disk and reading them back sequentially.
     Returns static molecular components (optionally dynamic ones) and the number of molecules per components.
     """
     for row in gl_components:
         _ = extract_molecular_components(row, h, out_dir, score_threshold, baseid_name,
-                                         layer_name, layer_to_ts, with_dynamic)
+                                         layer_name, layer_to_ts, with_dynamic, extra_props)
     return load_gt_components(out_dir, STATIC_COMP_TYPE + (DYN_COMP_TYPE if with_dynamic else 0))
