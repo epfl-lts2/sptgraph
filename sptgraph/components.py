@@ -7,6 +7,8 @@ import numpy as np
 import logging
 from collections import defaultdict, Counter
 import itertools
+import operator
+import pandas as pd
 
 import utils
 
@@ -117,8 +119,8 @@ def component_to_graphtool(comp, h, baseid_name='page_id', layer_name='layer', l
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int', comp['component_id'])
     g.gp.type = g.new_graph_property('int', DYN_COMP_TYPE)
-    g.gp.height = g.new_graph_property('int', comp['height'])
-    g.gp.width = g.new_graph_property('int', comp['width'])
+    g.gp.cheight = g.new_graph_property('int', comp['height'])
+    g.gp.cwidth = g.new_graph_property('int', comp['width'])
 
     # Create Vertex properties
     prop_map = {baseid_name: 'int64_t', layer_name: 'int32_t', 'nid': 'int64_t'}
@@ -173,7 +175,6 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
         LOGGER.error('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
         raise ImportError('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
 
-    # node_hist = Counter(dyn_g.vertex_properties[baseid_name].get_array())
     unique_baseids = np.unique(dyn_g.vertex_properties[baseid_name].get_array())
     N = len(unique_baseids)
     assert(N > 0)
@@ -181,13 +182,13 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int', dyn_g.gp.component)
     g.gp.type = g.new_graph_property('int', STATIC_COMP_TYPE)
-    g.gp.height = g.new_graph_property('int', dyn_g.gp.height)
-    g.gp.width = g.new_graph_property('int', dyn_g.gp.width)
+    g.gp.cheight = g.new_graph_property('int', dyn_g.gp.height)
+    g.gp.cwidth = g.new_graph_property('int', dyn_g.gp.width)
 
     # Vertex props
-    g.vp.count = g.new_vertex_property('int', 0)  # node importance
-    g.vp.in_deg = g.new_vertex_property('int', 0)
-    g.vp.out_deg = g.new_vertex_property('int', 0)
+    g.vp.dyn_count = g.new_vertex_property('int', 0)  # node importance
+    g.vp.dyn_in_deg = g.new_vertex_property('int', 0)
+    g.vp.dyn_out_deg = g.new_vertex_property('int', 0)
     g.vertex_properties[baseid_name] = g.new_vertex_property('int64_t')
 
     # Extra props
@@ -211,7 +212,7 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
     # Compress values on nodes
     for n in dyn_g.vertices():
         base_id = dyn_g.vertex_properties[baseid_name][n]
-        g.vp.count[baseid_map[base_id]] += 1
+        g.vp.dyn_count[baseid_map[base_id]] += 1
 
         if extra_props is not None:  # agglomerate extra props
             for p in extra_props:
@@ -238,13 +239,13 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
             g.add_edge(src, tgt)
 
         # inc source and target degree
-        g.vp.out_deg[src] += 1
-        g.vp.in_deg[tgt] += 1
+        g.vp.dyn_out_deg[src] += 1
+        g.vp.dyn_in_deg[tgt] += 1
 
     # Normalize weights
     for e in g.edges():
-        out_score = g.ep.count[e] / float(g.vp.out_deg[e.source()])
-        in_score = g.ep.count[e] / float(g.vp.in_deg[e.target()])
+        out_score = g.ep.count[e] / float(g.vp.dyn_out_deg[e.source()])
+        in_score = g.ep.count[e] / float(g.vp.dyn_in_deg[e.target()])
         g.ep.out_score[e] = out_score
         g.ep.in_score[e] = in_score
         g.ep.score[e] = (out_score + in_score) / 2
@@ -485,11 +486,18 @@ def load_gt_components(input_dir, comp_type=ALL_COMP_TYPE):
         path = str(f)
         name = os.path.basename(path)
         if name.startswith('st') and comp_type in (STATIC_COMP_TYPE, ALL_COMP_TYPE):
-            comps['static'].append(gt.load_graph(path))
+            comps['static'].append((name, gt.load_graph(path)))
 
         if name.startswith('dyn') and comp_type in (DYN_COMP_TYPE, ALL_COMP_TYPE):
-            comps['dynamic'].append(gt.load_graph(path))
-    return comps
+            comps['dynamic'].append((name, gt.load_graph(path)))
+
+    res = {'static': None, 'dynamic': None}
+    # Sort components by name
+    for k in res:
+        if k in comps:
+            res[k] = map(lambda x: x[1], sorted(comps[k], key=operator.itemgetter(0)))
+
+    return res
 
 
 def extract_molecular_components(comp, h, out_dir=None, score_threshold=0.05, baseid_name='page_id',
@@ -534,3 +542,113 @@ def extract_all_molecular_components_seq(gl_components, h, out_dir, score_thresh
         _ = extract_molecular_components(row, h, out_dir, score_threshold, baseid_name,
                                          layer_name, layer_to_ts, with_dynamic, extra_props)
     return load_gt_components(out_dir, STATIC_COMP_TYPE + (DYN_COMP_TYPE if with_dynamic else 0))
+
+
+def temporal_shape(g, size=None, normalize=True):
+    """Get temporal shape: number of nodes per layer.
+    nb_feats: resize the feature vector to a given length.
+    If length is bigger than number of layer, values are interpolated linearly
+    normalize: the node count per layer as a percentage of the whole distribution.
+    """
+    layers = g.vp.layer.a
+    nb_feats = len(np.unique(layers))
+    if not size:
+        size = nb_feats
+
+    if size >= nb_feats:
+        # Do histogram
+        f = pd.Series(np.histogram(layers, size)[0], dtype='float')
+        # If values are set to 0 the nb_bins is bigger than the number of layers
+        f[f == 0] = None  # set to None for interpolation
+        f.interpolate(inplace=True)
+        f = f.values
+    else:  # desired size if lower than nb_feats
+        f = pd.Series(np.histogram(layers, nb_feats)[0], dtype='float')
+        # expand to size * nb_feat array
+        f.index *= size
+        f = f.reindex(pd.Index(np.arange(f.index.max() + 1)))
+        # interpolate values for missing indices and average to the selected number of bins
+        f.interpolate(inplace=True)
+        f = f.values[:-1]  # remove last value to reshape array
+        window = len(f) / (nb_feats - 1)
+        a = f.reshape(window, -1)
+        f = np.mean(a, 1)
+
+    if normalize:
+        f /= f.sum()
+    return f
+
+
+def filter_molecules(molecules, indexes):
+    idx = indexes
+    if isinstance(indexes, (pd.DataFrame, pd.Series)):
+        idx = indexes.index.values
+
+    res = defaultdict(list)
+    for i in idx:
+        res['static'].append(molecules['static'][i])
+        res['dynamic'].append(molecules['dynamic'][i])
+
+    return res
+
+
+def to_undirected(g):
+    h = gt.Graph(directed=False)
+    h.add_vertex(g.num_vertices())
+
+    for e in g.edges():
+        u = e.source()
+        v = e.target()
+        if u == v:
+            continue
+
+        f = h.edge(u, v)
+        if not f:
+            h.add_edge(u, v)
+    return h
+
+
+def find_cliques(G):
+    """Adaptation of NetworkX find_clique
+    https://networkx.github.io/documentation/latest/reference/generated/networkx.algorithms.clique.find_cliques.html
+    """
+    if G.num_vertices() == 0:
+        return
+
+    if G.is_directed():
+        G = to_undirected(G)
+
+    adj = {G.vertex_index[u]: {G.vertex_index[v] for v in u.all_neighbours() if v != u} for u in G.vertices()}
+    Q = [None]
+    all_idx = G.vertex_index.copy().a
+    subg = set(all_idx)
+    cand = set(all_idx)
+    u = max(subg, key=lambda u: len(cand & adj[u]))
+    ext_u = cand - adj[u]
+    stack = []
+
+    try:
+        while True:
+            if ext_u:
+                q = ext_u.pop()
+                cand.remove(q)
+                Q[-1] = q
+                adj_q = adj[q]
+                subg_q = subg & adj_q
+                if not subg_q:
+                    yield Q[:]
+                else:
+                    cand_q = cand & adj_q
+                    if cand_q:
+                        stack.append((subg, cand, ext_u))
+                        Q.append(None)
+                        subg = subg_q
+                        cand = cand_q
+                        u = max(subg, key=lambda u: len(cand & adj[u]))
+                        ext_u = cand - adj[u]
+            else:
+                Q.pop()
+                subg, cand, ext_u = stack.pop()
+    except IndexError:
+        pass
+
