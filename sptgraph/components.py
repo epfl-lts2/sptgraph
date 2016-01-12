@@ -119,8 +119,8 @@ def component_to_graphtool(comp, h, baseid_name='page_id', layer_name='layer', l
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int', comp['component_id'])
     g.gp.type = g.new_graph_property('int', DYN_COMP_TYPE)
-    g.gp.cheight = g.new_graph_property('int', comp['height'])
-    g.gp.cwidth = g.new_graph_property('int', comp['width'])
+    # g.gp.cheight = g.new_graph_property('int', comp['height'])
+    # g.gp.cwidth = g.new_graph_property('int', comp['width'])
 
     # Create Vertex properties
     prop_map = {baseid_name: 'int64_t', layer_name: 'int32_t', 'nid': 'int64_t'}
@@ -182,8 +182,8 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int', dyn_g.gp.component)
     g.gp.type = g.new_graph_property('int', STATIC_COMP_TYPE)
-    g.gp.cheight = g.new_graph_property('int', dyn_g.gp.height)
-    g.gp.cwidth = g.new_graph_property('int', dyn_g.gp.width)
+    # g.gp.cheight = g.new_graph_property('int', dyn_g.gp.height)
+    # g.gp.cwidth = g.new_graph_property('int', dyn_g.gp.width)
 
     # Vertex props
     g.vp.dyn_count = g.new_vertex_property('int', 0)  # node importance
@@ -589,7 +589,7 @@ def filter_molecules(molecules, indexes):
         res['static'].append(molecules['static'][i])
         res['dynamic'].append(molecules['dynamic'][i])
 
-    return res
+    return dict(res)
 
 
 def to_undirected(g):
