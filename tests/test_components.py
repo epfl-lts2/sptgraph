@@ -28,7 +28,7 @@ class TestComponents(unittest.TestCase):
 
         # The graph has only 1 connected component
         h = components.find_connected_components(g)
-        cc = components.get_component_sframe(h)
+        cc = components.create_component_sframe(h)
         comps = components.extract_components(h, cc)
         self.assertEqual(1, len(comps))
 
@@ -40,7 +40,7 @@ class TestComponents(unittest.TestCase):
         g = gl.SGraph(nodes, edges)
 
         h = components.find_connected_components(g)
-        cc = components.get_component_sframe(h)
+        cc = components.create_component_sframe(h)
         comps = components.extract_components(h, cc)
         self.assertEqual(2, len(comps))
 
@@ -49,7 +49,7 @@ class TestComponents(unittest.TestCase):
         # Undirected, self-edges:
         g = sptgraph.create_spatio_temporal_graph(gen_graph(False), gen_signal(), True, verbose=False)
         h = components.find_connected_components(g)
-        cc = components.get_component_sframe(h)
+        cc = components.create_component_sframe(h)
         comps = components.extract_components(h, cc)
         self.assertEqual(1, len(comps))
 

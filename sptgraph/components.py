@@ -1,26 +1,20 @@
 # -*- coding: utf-8 -*-
 
-import sys
-import os
-import graphlab as gl
-import numpy as np
+import itertools
 import logging
 from collections import defaultdict, Counter
-import itertools
-import operator
+
+import graphlab as gl
+import numpy as np
 import pandas as pd
 
-import utils
+from dump import save_gt_components, load_gt_components, STATIC_COMP_TYPE, DYN_COMP_TYPE
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger('sptgraph')
 LOGGER.setLevel(logging.INFO)
 
 HAS_GRAPHTOOL = False
 HAS_NETWORKX = False
-
-STATIC_COMP_TYPE = 1
-DYN_COMP_TYPE = 2
-ALL_COMP_TYPE = STATIC_COMP_TYPE + DYN_COMP_TYPE
 
 try:
     import graph_tool.all as gt
@@ -49,7 +43,7 @@ def find_connected_components(g):
     return gl.SGraph(nodes, edges)
 
 
-def get_component_sframe(g, baseid_name='page_id', layer_name='layer'):
+def create_component_sframe(g, baseid_name='page_id', layer_name='layer'):
     """Get component SFrame enriched with structural properties for each component"""
 
     columns = g.vertices.column_names()
@@ -119,8 +113,6 @@ def component_to_graphtool(comp, h, baseid_name='page_id', layer_name='layer', l
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int', comp['component_id'])
     g.gp.type = g.new_graph_property('int', DYN_COMP_TYPE)
-    # g.gp.cheight = g.new_graph_property('int', comp['height'])
-    # g.gp.cwidth = g.new_graph_property('int', comp['width'])
 
     # Create Vertex properties
     prop_map = {baseid_name: 'int64_t', layer_name: 'int32_t', 'nid': 'int64_t'}
@@ -182,8 +174,6 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
     g = gt.Graph(directed=True)
     g.gp.component = g.new_graph_property('int', dyn_g.gp.component)
     g.gp.type = g.new_graph_property('int', STATIC_COMP_TYPE)
-    # g.gp.cheight = g.new_graph_property('int', dyn_g.gp.height)
-    # g.gp.cwidth = g.new_graph_property('int', dyn_g.gp.width)
 
     # Vertex props
     g.vp.dyn_count = g.new_vertex_property('int', 0)  # node importance
@@ -451,55 +441,6 @@ def extract_community_subgraphs(comp):
     return graphs
 
 
-def save_gt_component(c, out_dir, i=0, verbose=False):
-    name = ''
-    if 'type' in c.graph_properties:
-        name += 'st_' if c.gp.type == STATIC_COMP_TYPE else 'dyn_'
-    name += 'comp_'
-    if 'component' in c.graph_properties:
-        name += str(c.gp.component)
-    else:
-        name += str(i)
-
-    if 'cluster_id' in c.graph_properties:
-        name += '_' + str(c.gp.cluster_id)
-
-    path = str(os.path.join(out_dir, name + '.gt'))
-    c.save(path)
-    if verbose:
-        LOGGER.info('Wrote {}'.format(path))
-
-
-def save_gt_components(comps, out_dir, verbose=False):
-    """Save graph-tool components to disk"""
-    if not os.path.exists(out_dir):
-        os.mkdir(out_dir)
-
-    for i, c in enumerate(comps):
-        save_gt_component(c, out_dir, i, verbose)
-
-
-def load_gt_components(input_dir, comp_type=ALL_COMP_TYPE):
-    """Load graph-tool components from disk, if comp type is 2 return all types of components"""
-    comps = defaultdict(list)
-    for f in utils.list_dir(input_dir, fullpath=True):
-        path = str(f)
-        name = os.path.basename(path)
-        if name.startswith('st') and comp_type in (STATIC_COMP_TYPE, ALL_COMP_TYPE):
-            comps['static'].append((name, gt.load_graph(path)))
-
-        if name.startswith('dyn') and comp_type in (DYN_COMP_TYPE, ALL_COMP_TYPE):
-            comps['dynamic'].append((name, gt.load_graph(path)))
-
-    res = {'static': None, 'dynamic': None}
-    # Sort components by name
-    for k in res:
-        if k in comps:
-            res[k] = map(lambda x: x[1], sorted(comps[k], key=operator.itemgetter(0)))
-
-    return res
-
-
 def extract_molecular_components(comp, h, out_dir=None, score_threshold=0.05, baseid_name='page_id',
                                  layer_name='layer', layer_to_ts=None, with_dynamic=True,
                                  extra_props=('count_views', ),
@@ -532,9 +473,9 @@ def extract_molecular_components(comp, h, out_dir=None, score_threshold=0.05, ba
         return static_coms
 
 
-def extract_all_molecular_components_seq(gl_components, h, out_dir, score_threshold=0.05, baseid_name='page_id',
-                                         layer_name='layer', layer_to_ts=None, with_dynamic=True,
-                                         extra_props=('count_views', )):
+def extract_all_molecular_components(gl_components, h, out_dir, score_threshold=0.05, baseid_name='page_id',
+                                     layer_name='layer', layer_to_ts=None, with_dynamic=True,
+                                     extra_props=('count_views', )):
     """Extract all molecular components sequentially by dumping them on disk and reading them back sequentially.
     Returns static molecular components (optionally dynamic ones) and the number of molecules per components.
     """

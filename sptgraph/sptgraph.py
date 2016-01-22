@@ -12,7 +12,7 @@ from bitsets import bitset
 import utils
 import sptgraph_impl
 import logging
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger('sptgraph')
 LOGGER.setLevel(logging.INFO)
 
 try:
@@ -106,6 +106,7 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
         node_signal = create_node_signal_fast(signal, baseid_name, layer_name, verbose=verbose)
     else:
         node_signal = create_node_signal(signal, baseid_name, layer_name, verbose=verbose)
+
     sg = merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=excluded_ids, verbose=verbose)
     # Create graph
     if HAS_FAST_MODULE and not force_python:
