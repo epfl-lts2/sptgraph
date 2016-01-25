@@ -8,7 +8,7 @@ import graphlab as gl
 import numpy as np
 import pandas as pd
 
-from dump import save_gt_components, load_gt_components, STATIC_COMP_TYPE, DYN_COMP_TYPE
+from dump import save_molecules_db,  STATIC_COMP_TYPE, DYN_COMP_TYPE
 
 LOGGER = logging.getLogger('sptgraph')
 LOGGER.setLevel(logging.INFO)
@@ -59,6 +59,9 @@ def create_component_sframe(g, baseid_name='page_id', layer_name='layer'):
     comps['width'] = comps.apply(lambda x: len(np.unique(x[layer_name + 's'])))
     comps['height'] = comps.apply(lambda x: len(np.unique(x[baseid_name + 's'])))
 
+    edges = g.edges.groupby('component_id', {'src': gl.aggregate.CONCAT('__src_id'),
+                                             'tgt': gl.aggregate.CONCAT('__dst_id')})
+    comps = comps.join(edges, 'component_id')
     return comps.sort('node_count', False)
 
 
@@ -104,7 +107,7 @@ def component_to_networkx(comp, h, baseid_name='page_id', layer_name='layer', la
     return g
 
 
-def component_to_graphtool(comp, h, baseid_name='page_id', layer_name='layer', layer_to_ts=None, extra_props=None):
+def component_to_graphtool(comp, baseid_name='page_id', layer_name='layer', layer_to_ts=None, extra_props=None):
     if not HAS_GRAPHTOOL:
         LOGGER.error('graph-tool not installed, cannot use function')
         raise ImportError('graph-tool not installed, cannot use function')
@@ -141,10 +144,9 @@ def component_to_graphtool(comp, h, baseid_name='page_id', layer_name='layer', l
             g.vertex_properties['timestamp'][v] = layer_to_ts[comp[layer_name + 's'][i]]
 
     # Add edges
-    edges = h.edges[h.edges['component_id'] == comp['component_id']][['__src_id', '__dst_id']]
-    for k in edges:
-        src = vertex_map[k['__src_id']]
-        tgt = vertex_map[k['__dst_id']]
+    for u, v in itertools.izip(comp['src'], comp['tgt']):
+        src = vertex_map[u]
+        tgt = vertex_map[v]
         g.add_edge(src, tgt, False)
 
     return g
@@ -416,7 +418,7 @@ def extract_community_subgraphs(comp):
                 tgt_props[k][tgt] = v[src]
 
     # Create graphs
-    graphs = map(create_graph, np.unique(comp.vp.cluster_id.a))
+    graphs = map(create_graph, np.sort(np.unique(comp.vp.cluster_id.a)))
 
     # Map comp vertex to subgraphs vertex
     vertex_map = dict()
@@ -441,48 +443,45 @@ def extract_community_subgraphs(comp):
     return graphs
 
 
-def extract_molecular_components(comp, h, out_dir=None, score_threshold=0.05, baseid_name='page_id',
-                                 layer_name='layer', layer_to_ts=None, with_dynamic=True,
-                                 extra_props=('count_views', ),
-                                 verbose=False):
+def extract_molecular_components(comp, score_threshold=0.05, baseid_name='page_id',
+                                 layer_name='layer', layer_to_ts=None,
+                                 extra_props=('count_views', )):
     """Extract molecular components from graphlab dynamic activated component. The score threshold allows
     to prune out low-likelihood in and out edges when the dynamic component is contracted to a static component.
-    The parameter `with_dynamic` returns the associated dynamic molecular components associated to normal output: the
-    static molecular components. The parameter layer_ts maps a layer id to a timestamp for better readability.
+    The parameter layer_ts maps a layer id to a timestamp for better readability.
 
     """
-    dyn_comp = component_to_graphtool(comp, h, baseid_name, layer_name, layer_to_ts, extra_props)
+    dyn_comp = component_to_graphtool(comp, baseid_name, layer_name, layer_to_ts, extra_props)
     static_comp = _get_weighted_static_component_gt(dyn_comp, baseid_name, extra_props)
     static_comp = partition_static_component(static_comp, score_threshold, baseid_name)
     if static_comp is None:  # filter all nodes
         return None
 
     static_coms = extract_community_subgraphs(static_comp)
+    dyn_comp = partition_dynamic_component(dyn_comp, static_comp, baseid_name)
+    dyn_coms = extract_community_subgraphs(dyn_comp)
 
-    if out_dir:
-        save_gt_components(static_coms, out_dir, verbose)
-
-    if with_dynamic:
-        dyn_comp = partition_dynamic_component(dyn_comp, static_comp, baseid_name)
-        dyn_coms = extract_community_subgraphs(dyn_comp)
-        if out_dir:
-            save_gt_components(dyn_coms, out_dir, verbose)
-
-        return zip(static_coms, dyn_coms)
-    else:
-        return static_coms
+    mols = {'static': static_coms, 'dynamic': dyn_coms}
+    return mols
 
 
-def extract_all_molecular_components(gl_components, h, out_dir, score_threshold=0.05, baseid_name='page_id',
-                                     layer_name='layer', layer_to_ts=None, with_dynamic=True,
+def extract_all_molecular_components(gl_components, score_threshold=0.05, baseid_name='page_id',
+                                     layer_name='layer', layer_to_ts=None,
                                      extra_props=('count_views', )):
     """Extract all molecular components sequentially by dumping them on disk and reading them back sequentially.
     Returns static molecular components (optionally dynamic ones) and the number of molecules per components.
     """
-    for row in gl_components:
-        _ = extract_molecular_components(row, h, out_dir, score_threshold, baseid_name,
-                                         layer_name, layer_to_ts, with_dynamic, extra_props)
-    return load_gt_components(out_dir, STATIC_COMP_TYPE + (DYN_COMP_TYPE if with_dynamic else 0))
+    results = {'static': [], 'dynamic': []}
+    for i, row in enumerate(gl_components):
+        mols = extract_molecular_components(row, score_threshold, baseid_name,
+                                            layer_name, layer_to_ts, extra_props)
+        if i % 300 == 0:
+            LOGGER.INFO('Extracted from {} components'.format(i))
+        if mols:
+            results['static'].extend(mols['static'])
+            results['dynamic'].extend(mols['dynamic'])
+
+    return molecules_to_df(results)
 
 
 def temporal_shape(g, size=None, normalize=True):
@@ -593,3 +592,9 @@ def find_cliques(G):
     except IndexError:
         pass
 
+
+def molecules_to_df(molecules, signal_name='', layer_unit=''):
+    df = pd.DataFrame(molecules)
+    df['signal_name'] = signal_name
+    df['layer_unit'] = layer_unit
+    return df

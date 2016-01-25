@@ -21,7 +21,7 @@ ALL_COMP_TYPE = STATIC_COMP_TYPE + DYN_COMP_TYPE
 
 HAS_SQL = False
 try:
-    from sqlalchemy import create_engine, Table, Column, String, LargeBinary, MetaData
+    from sqlalchemy import create_engine, Table, Column, String, LargeBinary, MetaData, and_
     from sqlalchemy.ext.declarative import declarative_base
     from sqlalchemy.orm import sessionmaker
     Base = declarative_base()
@@ -72,9 +72,13 @@ if HAS_SQL:
                     return False
                 return True
 
+            mols = molecules
+            if isinstance(molecules, pd.DataFrame):
+                mols = molecules[['static', 'dynamic']].to_dict()
+
             res = []
-            for i in xrange(len(molecules['static'])):
-                c = self._build_comp(molecules['static'][i], molecules['dynamic'][i], signal_name, layer_unit)
+            for i in xrange(len(mols['static'])):
+                c = self._build_comp(mols['static'][i], mols['dynamic'][i], signal_name, layer_unit)
                 c = self.session.merge(c)
                 res.append(c)
                 if len(res) > batch_size:
@@ -98,15 +102,23 @@ if HAS_SQL:
             buf.seek(0)
             return gt.load_graph(buf)
 
-        def load_all(self):
+        def load_all(self, signal_name='', layer_unit=''):
+            query = self.session.query(Component)
+            if layer_unit:
+                query = query.filter(Component.layer_unit == layer_unit)
+            if signal_name:
+                query = query.filter(Component.signal_name == signal_name)
+            query = query.order_by(Component.mol_id)
             data = []
-            for comp in self.session.query(Component).order_by(Component.mol_id):
+            for comp in query:
                 d = {'mol_id': comp.mol_id,
                      'signal_name': comp.signal_name,
                      'layer_unit': comp.layer_unit,
                      'static': ComponentDAO.deserialize_graph(comp.static),
                      'dynamic': ComponentDAO.deserialize_graph(comp.dynamic)}
                 data.append(d)
+            if not data:
+                return None
             return pd.DataFrame(data)
 
 
@@ -121,6 +133,12 @@ if HAS_SQL:
         def __repr__(self):
            return "<Component(mol_id='%s', layer_unit='%s', signal_name='%s')>" \
                   % (self.mol_id, self.layer_unit, self.signal_name)
+
+
+    def save_molecules_db(out_dir, mols):
+        dao = ComponentDAO(out_dir)
+        dao.add_all(mols)
+        LOGGER.info('Saved {} molecule pairs'.format(len(mols['static'])))
 
 
 def get_molecule_id(g, i=0, postfix=''):

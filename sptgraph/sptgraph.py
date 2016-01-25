@@ -110,7 +110,7 @@ def create_spatio_temporal_graph(g, data, create_self_edges=True,
     sg = merge_signal_on_graph(g, node_signal, baseid_name, layer_name, excluded_ids=excluded_ids, verbose=verbose)
     # Create graph
     if HAS_FAST_MODULE and not force_python:
-        h = fast.build_sptgraph(sg, baseid_name, layer_name, create_self_edges, verbose=verbose)
+        h = fast.build_sptgraph(sg, baseid_name, layer_name, create_self_edges, verbose=False)
     else:
         h = sptgraph_impl.build_sptgraph(sg, create_self_edges, baseid_name, layer_name)
 
