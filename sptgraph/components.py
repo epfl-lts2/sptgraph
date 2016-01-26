@@ -475,8 +475,8 @@ def extract_all_molecular_components(gl_components, score_threshold=0.05, baseid
     for i, row in enumerate(gl_components):
         mols = extract_molecular_components(row, score_threshold, baseid_name,
                                             layer_name, layer_to_ts, extra_props)
-        if i % 300 == 0:
-            LOGGER.INFO('Extracted from {} components'.format(i))
+        if i % 300 == 0 and i != 0:
+            LOGGER.info('... extracted from {} components'.format(i))
         if mols:
             results['static'].extend(mols['static'])
             results['dynamic'].extend(mols['dynamic'])
