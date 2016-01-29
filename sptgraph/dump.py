@@ -102,13 +102,17 @@ if HAS_SQL:
             buf.seek(0)
             return gt.load_graph(buf)
 
-        def load_all(self, signal_name='', layer_unit=''):
+        def query_all(self, signal_name='', layer_unit=''):
             query = self.session.query(Component)
             if layer_unit:
                 query = query.filter(Component.layer_unit == layer_unit)
             if signal_name:
                 query = query.filter(Component.signal_name == signal_name)
             query = query.order_by(Component.mol_id)
+            return query
+
+        def load_all(self, signal_name='', layer_unit=''):
+            query = self.query_all(signal_name, layer_unit)
             data = []
             for comp in query:
                 d = {'mol_id': comp.mol_id,
@@ -120,6 +124,9 @@ if HAS_SQL:
             if not data:
                 return None
             return pd.DataFrame(data)
+
+        def count(self, signal_name='', layer_unit=''):
+            return self.query_all(signal_name, layer_unit).count()
 
 
     class Component(Base):

@@ -514,9 +514,42 @@ def temporal_shape(g, size=None, normalize=True):
         a = f.reshape(window, -1)
         f = np.mean(a, 1)
 
-    if normalize:
-        f /= f.sum()
+    if normalize:  # l2 norm
+        f /= np.sqrt(np.square(f).sum())
     return f
+
+
+def cluster_shapes(train_mat, full_mat, k):
+    import sklearn
+    kmeans = sklearn.cluster.KMeans(n_clusters=k)
+    kmeans.fit(train_mat)
+    labels = kmeans.predict(full_mat)
+    return kmeans.cluster_centers_, labels, kmeans.inertia_
+
+
+def best_shape_clustering(mols, nb_layers, k_range=range(3, 20), train_ratio=0.8, cluster_key='shape_cid'):
+    from sklearn.cross_validation import train_test_split
+    from sklearn.metrics import silhouette_score
+
+    shape_df = mols['dynamic'].apply(lambda x: temporal_shape(x, nb_layers))
+    train_idx, test_idx = train_test_split(shape_df.index.values, train_size=train_ratio)
+
+    train_mat = np.array(list(shape_df[shape_df.index.isin(train_idx)].values))
+    full_mat = np.array(list(shape_df.values))
+
+    centroids = None
+    labels = None
+    best_score = 0
+    for k in k_range:
+        res = cluster_shapes(train_mat, full_mat, k)
+        score = silhouette_score(full_mat, res[1])
+        if score > best_score:
+            centroids = res[0]
+            labels = res[1]
+            best_score = score
+
+    mols[cluster_key] = labels
+    return mols, centroids
 
 
 def filter_molecules(molecules, indexes):
