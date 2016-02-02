@@ -11,7 +11,7 @@ import pandas as pd
 from dump import save_molecules_db,  STATIC_COMP_TYPE, DYN_COMP_TYPE
 
 LOGGER = logging.getLogger('sptgraph')
-LOGGER.setLevel(logging.INFO)
+LOGGER.setLevel(logging.DEBUG)
 
 HAS_GRAPHTOOL = False
 HAS_NETWORKX = False
@@ -164,6 +164,21 @@ def get_weighted_static_component(dyn_g, baseid_name='page_id', extra_props=('co
     return None
 
 
+def mirror_property_maps(src_g, tgt_g, prop_types=('g', 'v', 'e'), filter=None, with_gvalue=True):
+    for k, v in src_g.properties.iteritems():
+        if k[0] not in prop_types:
+            continue
+
+        if filter is not None and k in filter:
+            continue
+
+        value = None
+        if with_gvalue:
+            if k[0] == 'g':
+                value = src_g.properties[k].a[0]
+        tgt_g.properties[k] = tgt_g.new_property(k[0], v.value_type(), value)
+
+
 def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props=('count_views', )):
     if not HAS_GRAPHTOOL:
         LOGGER.error('Graph-tool not installed, cannot use function _get_weighted_static_component_gt')
@@ -174,8 +189,8 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
     assert(N > 0)
 
     g = gt.Graph(directed=True)
-    g.gp.component = g.new_graph_property('int', dyn_g.gp.component)
-    g.gp.type = g.new_graph_property('int', STATIC_COMP_TYPE)
+    mirror_property_maps(dyn_g, g, prop_types=('g',))
+    g.gp.type = STATIC_COMP_TYPE
 
     # Vertex props
     g.vp.dyn_count = g.new_vertex_property('int', 0)  # node importance
@@ -309,6 +324,10 @@ def partition_static_component(g, threshold, baseid_name='page_id', weighted=Non
         LOGGER.error('Graph-tool not installed, cannot use function partition_static_component')
         raise ImportError('Graph-tool not installed, cannot use function partition_static_component')
 
+    if g.num_vertices() < 4:  # do not partition below 4 nodes
+        g.vp.cluster_id = g.new_vertex_property('int', 0)
+        return g
+
     if threshold > 0.0:
         filts = list()
         filts.append(g.edge_properties['in_score'].a > threshold)
@@ -349,7 +368,7 @@ def partition_static_component(g, threshold, baseid_name='page_id', weighted=Non
     return g
 
 
-def partition_dynamic_component(dyn_g, static_g, baseid_name='page_id', filter_single=True):
+def partition_dynamic_component(dyn_g, static_g, baseid_name='page_id', filter_single=True, ckey='cluster_id'):
     """Find the block partition of an unspecified size which minimizes the description length of the
     network, according to the stochastic blockmodel ensemble which best describes it. Optionally
     remove low likelihood in and out edges from a dynamic activated component and static component.
@@ -379,35 +398,28 @@ def partition_dynamic_component(dyn_g, static_g, baseid_name='page_id', filter_s
         dyn_g = filter_singletons(dyn_g)
 
     # Backport communities to dynamic component
-    id2cluster = dict(itertools.izip(static_g.vertex_properties[baseid_name].a, static_g.vp.cluster_id.a))
-    dyn_g.vp.cluster_id = dyn_g.new_vertex_property('int')
+    id2cluster = dict(itertools.izip(static_g.vertex_properties[baseid_name].a, static_g.vertex_properties[ckey].a))
+    dyn_g.vertex_properties[ckey] = dyn_g.new_vertex_property('int')
 
     for n in dyn_g.vertices():
-        cluster_id = id2cluster[dyn_g.vertex_properties[baseid_name][n]]
-        dyn_g.vp.cluster_id[n] = cluster_id
+        cid = id2cluster[dyn_g.vertex_properties[baseid_name][n]]
+        dyn_g.vertex_properties[ckey][n] = cid
 
     return dyn_g
 
 
-def extract_community_subgraphs(comp):
+def extract_community_subgraphs(comp, ckey='cluster_id'):
     """Extract communities from a component. Associated properties are copied in each community and the property
-    `cluster_id` is stored as a graph property for each community
+    `ckey` is stored as a graph property for each community
 
     """
-    def mirror_property_maps(src_g, tgt_g):
-        for k, v in src_g.properties.iteritems():
-            if k != ('v', 'cluster_id'):
-                tgt_g.properties[k] = tgt_g.new_property(k[0], v.value_type())
-
     def create_graph(gid):
         g = gt.Graph(directed=True)
-        mirror_property_maps(comp, g)
-        g.gp.component = g.new_graph_property('int')
-        g.gp.component = comp.gp.component  # comp id
-        g.gp.cluster_id = g.new_graph_property('int')
-        g.gp.cluster_id = gid
-        g.gp.type = g.new_graph_property('int')
-        g.gp.type = comp.gp.type
+        mirror_property_maps(comp, g, filter=[('v', ckey)])
+        g.graph_properties[ckey] = g.new_graph_property('int', gid)
+        # mirror_gproperty_map(comp, g)
+        # g.gp.component = g.new_graph_property('int', comp.gp.component)  # comp id
+        # g.gp.type = g.new_graph_property('int', comp.gp.type)
         return g
 
     def copy_props(key, src, src_g, tgt, tgt_g):
@@ -418,21 +430,21 @@ def extract_community_subgraphs(comp):
                 tgt_props[k][tgt] = v[src]
 
     # Create graphs
-    graphs = map(create_graph, np.sort(np.unique(comp.vp.cluster_id.a)))
+    graphs = map(create_graph, np.sort(np.unique(comp.vertex_properties[ckey].a)))
 
     # Map comp vertex to subgraphs vertex
     vertex_map = dict()
     # Create nodes and fill property maps
     for n in comp.vertices():
-        cid = comp.vp.cluster_id[n]
+        cid = comp.vertex_properties[ckey][n]
         v = graphs[cid].add_vertex()
         vertex_map[n] = v
         copy_props('v', n, comp, v, graphs[cid])
 
     # Create edges
     for e in comp.edges():
-        src_cid = comp.vp.cluster_id[e.source()]
-        tgt_cid = comp.vp.cluster_id[e.target()]
+        src_cid = comp.vertex_properties[ckey][e.source()]
+        tgt_cid = comp.vertex_properties[ckey][e.target()]
         # Edges should belong to the same community
         if src_cid != tgt_cid:
             continue
@@ -454,15 +466,45 @@ def extract_molecular_components(comp, score_threshold=0.05, baseid_name='page_i
     dyn_comp = component_to_graphtool(comp, baseid_name, layer_name, layer_to_ts, extra_props)
     static_comp = _get_weighted_static_component_gt(dyn_comp, baseid_name, extra_props)
     static_comp = partition_static_component(static_comp, score_threshold, baseid_name)
+
     if static_comp is None:  # filter all nodes
+        LOGGER.debug('All nodes filtered out')
         return None
 
-    static_coms = extract_community_subgraphs(static_comp)
+    # Partition the dynamic component into smaller pieces using the static component clusters
     dyn_comp = partition_dynamic_component(dyn_comp, static_comp, baseid_name)
     dyn_coms = extract_community_subgraphs(dyn_comp)
 
-    mols = {'static': static_coms, 'dynamic': dyn_coms}
+    mols = defaultdict(list)
+    for d in dyn_coms:
+        res = extract_atomic_molecules(d)
+        if res:
+            mols['static'].extend(res['static'])
+            mols['dynamic'].extend(res['dynamic'])
+
+    assert len(mols['static']) == len(mols['dynamic'])
     return mols
+
+
+def extract_atomic_molecules(dyn_g, ckey='com_id', baseid_name='page_id', extra_props=('count_views', ),
+                             filter_unique_page=True):
+    # Extract weakly connected components
+    # Get static graph with component_id, cluster_id and com_id
+    comp, hist = gt.label_components(dyn_g, directed=False)
+    dyn_g.vertex_properties[ckey] = comp
+    dyn_coms = extract_community_subgraphs(dyn_g, ckey)
+
+    res = defaultdict(list)
+    for d in dyn_coms:
+        s = _get_weighted_static_component_gt(d, baseid_name, extra_props)
+        if not filter_unique_page:
+            res['static'].append(s)
+            res['dynamic'].append(d)
+        else:
+            if s.num_vertices() > 1:
+                res['static'].append(s)
+                res['dynamic'].append(d)
+    return res
 
 
 def extract_all_molecular_components(gl_components, score_threshold=0.05, baseid_name='page_id',
@@ -488,7 +530,7 @@ def temporal_shape(g, size=None, normalize=True):
     """Get temporal shape: number of nodes per layer.
     nb_feats: resize the feature vector to a given length.
     If length is bigger than number of layer, values are interpolated linearly
-    normalize: the node count per layer as a percentage of the whole distribution.
+    normalize: l2 norm.
     """
     layers = g.vp.layer.a
     nb_feats = len(np.unique(layers))

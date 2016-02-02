@@ -160,6 +160,9 @@ def get_molecule_id(g, i=0, postfix=''):
     if 'cluster_id' in g.graph_properties:
         name += '_' + str(g.gp.cluster_id)
 
+    if 'com_id' in g.graph_properties:
+        name += '_' + str(g.gp.com_id)
+
     if 'layer_unit' in g.graph_properties:
         name += '_' + str(g.gp.layer_unit)
 
