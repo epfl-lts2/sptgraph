@@ -206,7 +206,7 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
             g.vertex_properties[p] = g.new_vertex_property('double')
 
     # Edge props
-    g.ep.count = g.new_edge_property('int', 1)
+    g.ep.count = g.new_edge_property('int', 0)
     g.ep.out_score = g.new_edge_property('double', 0)
     g.ep.in_score = g.new_edge_property('double', 0)
     g.ep.score = g.new_edge_property('double', 0)
@@ -240,10 +240,10 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
         g.vertex_properties[baseid_name][tgt] = v
 
         e = g.edge(src, tgt)
-        if e:
-            g.ep.count[e] += 1
-        else:
-            g.add_edge(src, tgt)
+        if not e:
+            e = g.add_edge(src, tgt)
+
+        g.ep.count[e] += 1
 
         # inc source and target degree
         g.vp.dyn_out_deg[src] += 1
@@ -477,7 +477,7 @@ def extract_molecular_components(comp, score_threshold=0.05, baseid_name='page_i
 
     mols = defaultdict(list)
     for d in dyn_coms:
-        res = extract_atomic_molecules(d)
+        res = extract_irreducible_molecules(d)
         if res:
             mols['static'].extend(res['static'])
             mols['dynamic'].extend(res['dynamic'])
@@ -486,8 +486,8 @@ def extract_molecular_components(comp, score_threshold=0.05, baseid_name='page_i
     return mols
 
 
-def extract_atomic_molecules(dyn_g, ckey='com_id', baseid_name='page_id', extra_props=('count_views', ),
-                             filter_unique_page=True):
+def extract_irreducible_molecules(dyn_g, ckey='com_id', baseid_name='page_id', extra_props=('count_views',),
+                                  filter_unique_page=True):
     # Extract weakly connected components
     # Get static graph with component_id, cluster_id and com_id
     comp, hist = gt.label_components(dyn_g, directed=False)
@@ -673,3 +673,33 @@ def molecules_to_df(molecules, signal_name='', layer_unit=''):
     df['signal_name'] = signal_name
     df['layer_unit'] = layer_unit
     return df
+
+
+def molecule_smoothness(sta_g, signal='count_views', edge_divider='out'):
+    sum_views = sta_g.vertex_properties[signal].a.sum()
+
+    norm_signal = sta_g.new_vertex_property('double')
+    norm_signal.a = sta_g.vertex_properties[signal].a / float(sum_views)
+
+    eweight = sta_g.new_edge_property('double')
+    if edge_divider == 'count':
+        total_ecount = sta_g.ep.count.a.sum()
+        eweight.a = sta_g.ep.count.a / float(total_ecount)
+    elif edge_divider == 'in':
+        eweight.a = sta_g.ep.in_score.a
+    else:
+        eweight.a = sta_g.ep.out_score.a
+
+    res = []
+    for e in sta_g.edges():
+        u = e.source()
+        v = e.target()
+
+        if u == v:
+            continue
+
+        s = norm_signal[u] - norm_signal[v]
+        score = s * s * eweight[e]
+        res.append(score)
+
+    return np.array(res).mean()
