@@ -675,11 +675,10 @@ def molecules_to_df(molecules, signal_name='', layer_unit=''):
     return df
 
 
-def molecule_smoothness(sta_g, signal='count_views', edge_divider='out'):
-    sum_views = sta_g.vertex_properties[signal].a.sum()
-
+def molecule_sharpness(sta_g, signal='count_views', edge_divider='out'):
+    views = sta_g.vertex_properties[signal].a
     norm_signal = sta_g.new_vertex_property('double')
-    norm_signal.a = sta_g.vertex_properties[signal].a / float(sum_views)
+    norm_signal.a = sta_g.vertex_properties[signal].a / np.linalg.norm(views)  # Dirichlet
 
     eweight = sta_g.new_edge_property('double')
     if edge_divider == 'count':
@@ -702,4 +701,4 @@ def molecule_smoothness(sta_g, signal='count_views', edge_divider='out'):
         score = s * s * eweight[e]
         res.append(score)
 
-    return np.array(res).mean()
+    return np.array(res).sum()
