@@ -228,6 +228,9 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
 
     # Compress edges
     for arc in dyn_g.edges():
+
+        # base_src = src - (l * max_id)
+
         # static g
         u = dyn_g.vertex_properties[baseid_name][arc.source()]
         v = dyn_g.vertex_properties[baseid_name][arc.target()]
@@ -239,10 +242,7 @@ def _get_weighted_static_component_gt(dyn_g,  baseid_name='page_id', extra_props
         g.vertex_properties[baseid_name][src] = u
         g.vertex_properties[baseid_name][tgt] = v
 
-        e = g.edge(src, tgt)
-        if not e:
-            e = g.add_edge(src, tgt)
-
+        e = g.edge(src, tgt, add_missing=True)
         g.ep.count[e] += 1
 
         # inc source and target degree
@@ -463,7 +463,9 @@ def extract_molecular_components(comp, score_threshold=0.05, baseid_name='page_i
     The parameter layer_ts maps a layer id to a timestamp for better readability.
 
     """
+    LOGGER.debug('Extract mol component')
     dyn_comp = component_to_graphtool(comp, baseid_name, layer_name, layer_to_ts, extra_props)
+    LOGGER.debug('Converted in graphtool format')
     static_comp = _get_weighted_static_component_gt(dyn_comp, baseid_name, extra_props)
     static_comp = partition_static_component(static_comp, score_threshold, baseid_name)
 
@@ -482,6 +484,7 @@ def extract_molecular_components(comp, score_threshold=0.05, baseid_name='page_i
             mols['static'].extend(res['static'])
             mols['dynamic'].extend(res['dynamic'])
 
+    LOGGER.debug('Component partitions in {} rich events'.format(len(mols['static'])))
     assert len(mols['static']) == len(mols['dynamic'])
     return mols
 
