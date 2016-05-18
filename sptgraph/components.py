@@ -171,11 +171,13 @@ def mirror_property_maps(src_g, tgt_g, prop_types=('g', 'v', 'e'), filter=None, 
 
         if filter is not None and k in filter:
             continue
-
         value = None
         if with_gvalue:
             if k[0] == 'g':
-                value = src_g.properties[k].a[0]
+                if src_g.properties[k].value_type() == 'string':
+                    value = src_g.properties[k]
+                else:
+                    value = src_g.properties[k].a[0]
         tgt_g.properties[k] = tgt_g.new_property(k[0], v.value_type(), value)
 
 
@@ -362,7 +364,7 @@ def partition_static_component(g, threshold, baseid_name='page_id', weighted=Non
         max_clusters = None
 
     # monkey-path graph_tool in blockmodel.py
-    clusters = gtc.minimize_blockmodel_dl(g, min_B=min_clusters, max_B=max_clusters, verbose=False).b
+    clusters = gtc.minimize_blockmodel_dl(g, B_min=min_clusters, B_max=max_clusters, verbose=False).b
     # Add communities
     g.vp.cluster_id = clusters
     return g
